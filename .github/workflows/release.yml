@@ -9,7 +9,13 @@ permissions:
   contents: write
 
 jobs:
+  # Reuses ci.yml's clippy gate so a release build never ships code that
+  # would fail the warnings-as-errors check.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   build:
+    needs: ci
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
