@@ -16,7 +16,7 @@ jobs:
 
       # restore/save split (not plain `cache@v4`) so the cache is still saved
       # when clippy fails — `cache@v4`'s save is `post-if: success()`. Same
-      # key as release.yml so the two workflows share one cache.
+      # key as release.yml/test-job so all three share one cache.
       - name: Restore cargo registry
         id: cargo-cache
         uses: actions/cache/restore@v4
@@ -32,6 +32,33 @@ jobs:
       # noise, not a code warning, so it's excluded from the deny-all gate.
       - name: Clippy (deny warnings)
         run: cargo clippy --workspace --all-targets -- -D warnings -A linker-messages
+
+      - name: Save cargo registry
+        if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore cargo registry
+        id: cargo-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-registry-
+
+      - name: Test
+        run: cargo test --workspace
 
       - name: Save cargo registry
         if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
