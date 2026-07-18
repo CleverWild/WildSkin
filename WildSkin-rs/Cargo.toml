@@ -1,0 +1,23 @@
+[package]
+name = "wildskin"
+version = "0.1.0"
+edition = "2024"
+license-file = "../LICENSE-GPL"
+
+[lib]
+crate-type = ["cdylib"]
+name = "WildSkin"
+
+[dependencies]
+hudhook = "0.9"
+shared = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+aobscan = "0.3"
+dirs = { workspace = true }
+paste = "1"
+winsafe = { version = "0.0.28", features = ["kernel", "user"] }
+abi-verify-macro = { version = "0.1.0", path = "../abi-verify-macro" }
+
+[lints]
+workspace = true

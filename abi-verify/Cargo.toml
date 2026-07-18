@@ -1,0 +1,16 @@
+[package]
+name = "abi-verify"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "abi_verify"
+path = "src/lib.rs"
+
+[dependencies]
+aobscan = "0.3.0"
+iced-x86 = { version = "1", default-features = false, features = ["decoder", "encoder", "instr_info", "std"] }
+
+[lints]
+workspace = true

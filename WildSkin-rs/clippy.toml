@@ -1,0 +1,9 @@
+suppress-restriction-lint-in-const = true
+
+module-items-ordered-within-groupings = ["UPPER_SNAKE_CASE"]
+source-item-ordering = ["enum"]
+trait-assoc-item-kinds-order = [
+    "const",
+    "type",
+    "fn",
+] # community tested standard

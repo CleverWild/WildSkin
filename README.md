@@ -1,47 +1,63 @@
-﻿<div align="center">
+﻿# WildSkin
 
-   [![C++](https://img.shields.io/badge/Language-C%2B%2B-%23f34b7d.svg?style=plastic)](https://en.wikipedia.org/wiki/C%2B%2B)
-   [![LOL](https://img.shields.io/badge/Game-League%20of%20Legends-445fa5.svg?style=plastic)](https://na.leagueoflegends.com)
-   [![Windows](https://img.shields.io/badge/Platform-Windows-0078d7.svg?style=plastic)](https://en.wikipedia.org/wiki/Microsoft_Windows)
-   [![x64](https://img.shields.io/badge/Arch-x64-red.svg?style=plastic)](https://en.wikipedia.org/wiki/X86-64)
-   [![License](https://img.shields.io/github/license/R3nzTheCodeGOD/R3nzSkin.svg?style=plastic)](LICENSE)
-   [![Issues](https://img.shields.io/github/issues/R3nzTheCodeGOD/R3nzSkin.svg?style=plastic)](https://github.com/R3nzTheCodeGOD/R3nzSkin/issues)
-   ![Windows](https://github.com/R3nzTheCodeGOD/R3nzSkin/workflows/Windows/badge.svg?branch=main&event=push)
+> [!IMPORTANT]
+> Please do not use Issues to post advertisements, promotions, or repeated recommendations of similar paid products. Whether those products work or not is unrelated to this project, but abusive language, spam, or repeatedly posting through alternate accounts will not be accepted.
 
-   # **R3nzSkin**
+## **Disclaimer**
 
-   ## Announcement
-   R3nzSkin is **no longer supported** due to Riot Games implementing <a href="https://support-leagueoflegends.riotgames.com/hc/en-us/articles/24169857932435-Riot-Vanguard-League-of-Legends-">Valorant's Vanguard anti-cheat to League of Legends</a>
+**This project is for learning and technical exchange purposes only. Commercial use or any illegal activity is strictly prohibited. Any direct or indirect consequences arising from the use of this project shall be borne solely by the user, and the author assumes no responsibility.**
 
-   <img src="https://user-images.githubusercontent.com/58574988/134170370-c827d712-fcc7-432f-b9f8-96678b0c9bf6.gif">
+**By using this project, you fully understand and accept the above terms.**
 
-   `R3nzSkin` is an internal skin changer for League of Legends.
+## Building
 
-</div>
+Requirements: a recent stable [Rust](https://rustup.rs/) toolchain (edition
+2024, latest) targeting `x86_64-pc-windows-msvc`.
 
-- Change the skin of your champion, your ward, other champions, towers, minions, and jungle monsters in the game.
-- Automatic skin database update.
-- Support for spectator mode.
-- Change skins anytime and unlimited times in a single game.
-- Supports all popular languages ​​in the world.
-- In-game configuration with <a href="https://github.com/ocornut/imgui">ImGui</a>.
-- <a href="https://github.com/nlohmann/json">JSON</a> based configuration saving & loading
+```bash
+git clone https://github.com/CleverWild/WildSkin.git
+cd WildSkin
+cargo xtask build --release
+```
 
-# Building
-   1. Clone the source with `git clone --recursive https://github.com/R3nzTheCodeGOD/R3nzSkin.git`
-   2. Build in Visual Studio 2019/2022 with configuration "Your Region - x64"
+This builds `WildSkin.dll` and prints where it ended up. The injector
+(`WildSkin_Injector.exe`) is a separate, closed-source component not built
+from this repository; grab it from
+[Releases](https://github.com/CleverWild/WildSkin/releases/latest).
 
-# Usage
-   1. Compile source or <a href="https://github.com/R3nzTheCodeGOD/R3nzSkin/releases/latest">download</a> a compiled version.
-   2. Use `R3nzSkin_Injector.exe` or inject the built DLL into the game yourself.
-      - *Administrator* privilege may be needed if the injector failed to inject the DLL.
-      - League client can crash if `R3nzSkin` is injected before being in the game.
-         - A workaround is to not inject until you are in the game (you will need to be fast to not disrupt the game).
-   3. Press <kbd>Insert</kbd> to bring up the menu.
-   4. Select the skin for you, your teammates, enemies, and wards.
+If you don't trust this project's closed-source injector, the injector from
+[hydy100/R3nzSkin](https://github.com/hydy100/R3nzSkin)'s releases can be
+used instead, those two are interchangeable.
 
-# Further optimizations
-   If your CPU supports AVX / AVX2 / AVX-512 instruction set, you can enable it in project settings. This should result in more performant code, optimized for your CPU. Currently SSE2 instructions are selected in project settings.
+## Usage
 
-# Credits
-   This program is an improved and updated version of the <a href="https://github.com/B3akers">B3akers</a>/<a href="https://github.com/B3akers/LeagueSkinChanger">LeagueSkinChanger</a> project.
+1. Build from source (above) or grab a build from
+   [Releases](https://github.com/CleverWild/WildSkin/releases/latest), once
+   one is published.
+2. Run `WildSkin_Injector.exe` and click **Start** while League of Legends
+   is running (or launch the injector first — it waits for and auto-detects
+   the game process).
+3. The menu opens automatically; press **Insert** (default keybind,
+   rebindable) to toggle it. Enable **Quick Skin Change** in the Extras tab
+   to cycle skins with **Page Up**/**Page Down** (also rebindable).
+
+## About the project
+
+WildSkin is a full Rust rewrite of the original C++ `R3nzSkin`, whose
+[upstream repository](https://github.com/R3nzTheCodeGOD/R3nzSkin) is now
+archived; this project is maintained as a fork independent of the upstream
+C++ codebases. The skin-changer DLL (`WildSkin-rs`, this repository) is open
+source; there's no paid version. The injector is a separate, closed-source
+component.
+
+## Credits
+
+This project is a Rust port of the original C++ repository [R3nzTheCodeGOD/R3nzSkin](https://github.com/R3nzTheCodeGOD/R3nzSkin), which is distributed under the MIT license (see the [`LICENSE-ORIGINAL`](LICENSE-ORIGINAL) file).
+
+Thanks to [hydy100/R3nzSkin](https://github.com/hydy100/R3nzSkin) for the inspiration behind this project's injector.
+
+The skin-changer DLL (`WildSkin-rs`) is licensed under the terms of the **GNU
+General Public License v3.0** (see the [`LICENSE-GPL`](LICENSE-GPL) file). The
+supporting crates (`shared`, `xtask`, `abi-verify`, `abi-verify-macro`) are
+dual-licensed under **MIT** or **Apache-2.0**, at your option (see
+[`LICENSE-MIT`](LICENSE-MIT) / [`LICENSE-APACHE`](LICENSE-APACHE)).

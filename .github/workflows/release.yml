@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The injector is a separate private repo, absent from the public
+      # checkout; pull it into WildSkin-injector/ so xtask picks it up.
+      - name: Checkout injector
+        uses: actions/checkout@v4
+        with:
+          repository: CleverWild/WildSkin-injector
+          path: WildSkin-injector
+          token: ${{ secrets.INJECTOR_TOKEN }}
+
+      # The committed Cargo.toml omits the injector from `members`; add it back
+      # so `workspace = true` inheritance resolves and it builds.
+      - name: Add injector to workspace
+        run: (Get-Content Cargo.toml -Raw) -replace '"WildSkin-rs",', '"WildSkin-rs", "WildSkin-injector",' | Set-Content Cargo.toml -NoNewline
+
+      # windows-latest ships Rust/rustup preinstalled; rustup auto-installs
+      # the toolchain pinned by rust-toolchain.toml on first cargo invocation.
+
+      # --obfuscate needs the ollvm toolchain; setup-ollvm downloads+links it
+      # and is idempotent, so it's safe to run every time.
+      - name: Setup ollvm toolchain
+        run: cargo xtask setup-ollvm
+
+      - name: Build
+        run: cargo xtask build --obfuscate
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WildSkin
+          path: |
+            target/x86_64-pc-windows-msvc/release/WildSkin.dll
+            target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "${{ github.ref_name }}"
+          target/x86_64-pc-windows-msvc/release/WildSkin.dll
+          target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
+          --generate-notes

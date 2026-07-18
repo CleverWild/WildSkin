@@ -1,0 +1,130 @@
+//! imgui-driven hotkey input for `KeyBind`: per-frame press/hold checks and
+//! the click-to-rebind capture scan.
+
+use crate::keybind::{self, KeyBind, KeyCode};
+use hudhook::imgui::{self, Ui};
+
+// Per-frame hotkey-state checks for bound keys. Built for the "quick skin
+// change" feature (config has `quick_skin_change` + previous/next skin keys),
+// but the per-frame polling that would call these isn't wired into the render
+// loop yet, so they read as dead. Kept so enabling that feature is just the
+// call-site wiring.
+impl KeyBind {
+    /// `true` on the single frame `self`'s bound key/mouse-button/wheel
+    /// direction transitions to pressed (no auto-repeat).
+    #[expect(dead_code, reason = "per-frame hotkey check for the not-yet-wired quick-skin-change feature — see comment above")]
+    pub fn is_pressed(&self, ui: &Ui) -> bool {
+        if !self.is_set() {
+            return false;
+        }
+        if self.code() == KeyCode::MousewheelDown {
+            return ui.io().mouse_wheel < 0.0;
+        }
+        if self.code() == KeyCode::MousewheelUp {
+            return ui.io().mouse_wheel > 0.0;
+        }
+        if is_mouse_code(self.code()) {
+            let button = self.code() as i32 - KeyCode::Mouse1 as i32;
+            return ui.is_mouse_clicked(mouse_button_from_index(button));
+        }
+        ui.is_key_index_pressed_no_repeat(self.vk_code() as u32)
+    }
+
+    /// `true` on every frame `self`'s bound key/mouse-button is held down
+    /// (unlike `is_pressed`, repeats every frame, not just the transition).
+    #[expect(dead_code, reason = "per-frame hotkey check for the not-yet-wired quick-skin-change feature — see comment above")]
+    pub fn is_down(&self, ui: &Ui) -> bool {
+        if !self.is_set() {
+            return false;
+        }
+        if self.code() == KeyCode::MousewheelDown {
+            return ui.io().mouse_wheel < 0.0;
+        }
+        if self.code() == KeyCode::MousewheelUp {
+            return ui.io().mouse_wheel > 0.0;
+        }
+        if is_mouse_code(self.code()) {
+            let button = self.code() as i32 - KeyCode::Mouse1 as i32;
+            return ui.is_mouse_down(mouse_button_from_index(button));
+        }
+        ui.is_key_index_down(self.vk_code() as u32)
+    }
+
+    /// Scans every possible key/mouse input for the first one currently
+    /// pressed and binds `self` to it, exactly mirroring the original's
+    /// `setToPressedKey`: Escape clears the binding, the mouse wheel and
+    /// five mouse buttons are checked before the full VK range, and an
+    /// LCTRL match is promoted to RALT when RALT is also down (handles
+    /// keyboard layouts where `AltGr` reports as a phantom LCTRL+RALT pair).
+    /// Returns `true` the frame something was captured.
+    pub fn set_to_pressed_key(&mut self, ui: &Ui) -> bool {
+        const VK_ESCAPE: u32 = 0x1B;
+        if ui.is_key_index_pressed_no_repeat(VK_ESCAPE) {
+            *self = Self::new(KeyCode::None);
+            return true;
+        }
+
+        let wheel = ui.io().mouse_wheel;
+        if wheel < 0.0 {
+            *self = Self::new(KeyCode::MousewheelDown);
+            return true;
+        }
+        if wheel > 0.0 {
+            *self = Self::new(KeyCode::MousewheelUp);
+            return true;
+        }
+
+        for i in 0..5 {
+            if ui.is_mouse_clicked(mouse_button_from_index(i)) {
+                let code: KeyCode =
+                    // SAFETY: `KeyCode` is `#[repr(u8)]` and
+                    // `Mouse1..=Mouse5` are five consecutive variants, so
+                    // `Mouse1 as u8 + i` (i in 0..5) is always a valid
+                    // in-range discriminant.
+                    unsafe { std::mem::transmute(KeyCode::Mouse1 as u8 + i as u8) };
+                *self = Self::new(code);
+                return true;
+            }
+        }
+
+        for vk in 0..256i32 {
+            if !ui.is_key_index_pressed_no_repeat(vk as u32) {
+                continue;
+            }
+            if let Some(mut code) = keybind::vk_to_code(vk) {
+                if code == KeyCode::Lctrl {
+                    let ralt = Self::new(KeyCode::Ralt);
+                    if ui.is_key_index_pressed_no_repeat(ralt.vk_code() as u32) {
+                        code = KeyCode::Ralt;
+                    }
+                }
+                *self = Self::new(code);
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// `KeyCode` isn't `PartialOrd` (Task 3 keeps it minimal, comparable only by
+/// equality), so this compares discriminants directly rather than using
+/// `RangeInclusive::contains` on the enum itself.
+#[allow(dead_code, reason = "helper for the not-yet-wired is_pressed/is_down per-frame hotkey checks above")]
+fn is_mouse_code(code: KeyCode) -> bool {
+    let c = code as u8;
+    (KeyCode::Mouse1 as u8..=KeyCode::Mouse5 as u8).contains(&c)
+}
+
+/// `imgui::MouseButton` has no by-index constructor in the installed 0.12
+/// crate (only `Left`/`Right`/`Middle`/`Extra1`/`Extra2` variants) — this
+/// hand-matches the same `0..5` index range the original's raw mouse-button
+/// codes use.
+const fn mouse_button_from_index(i: i32) -> imgui::MouseButton {
+    match i {
+        0 => imgui::MouseButton::Left,
+        1 => imgui::MouseButton::Right,
+        2 => imgui::MouseButton::Middle,
+        3 => imgui::MouseButton::Extra1,
+        _ => imgui::MouseButton::Extra2,
+    }
+}

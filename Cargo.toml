@@ -1,0 +1,164 @@
+[workspace]
+resolver = "3"
+members = ["WildSkin-rs", "shared", "xtask", "abi-verify", "abi-verify-macro"]
+
+[workspace.dependencies]
+serde_json = "1"
+dirs = "6"
+shared = { path = "shared" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1 # Reduces build parallelism, allowing LTO to make the code more monolithic
+panic = "abort"
+strip = true # Automatically removes all debugging symbols and import tables (the `strip` command)
+overflow-checks = false
+
+[workspace.lints.rust]
+missing_unsafe_on_extern = "deny"
+unsafe_attr_outside_unsafe = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+unstable_features = "deny"
+
+deprecated_safe_2024 = "warn"
+ffi_unwind_calls = "warn"
+linker_messages = "warn"
+
+elided_lifetimes_in_paths = "warn"
+explicit_outlives_requirements = "warn"
+impl-trait-overcaptures = "warn"
+impl-trait-redundant-captures = "warn"
+redundant_lifetimes = "warn"
+single_use_lifetimes = "warn"
+unused_lifetimes = "warn"
+
+macro_use_extern_crate = "warn"
+redundant_imports = "warn"
+unused_import_braces = "warn"
+unused_macro_rules = "warn"
+unused_qualifications = "warn"
+
+unit_bindings = "warn"
+
+unnameable_types = "warn"
+
+[workspace.lints.clippy]
+cast_lossless = "allow"
+derive_partial_eq_without_eq = "allow"
+future_not_send = "allow"
+inconsistent_struct_constructor = "allow"
+inline_always = "allow"
+missing_errors_doc = "allow"
+missing_fields_in_debug = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+needless_pass_by_ref_mut = "allow"
+pub_underscore_fields = "allow"
+redundant_pub_crate = "allow"
+uninhabited_references = "allow" # safe with unsafe_code = "forbid" and standard uninhabited pattern (match *self {})
+too-many-lines = "allow" # this is a very common pattern in server code, and it's not always possible to break it down into smaller modules without hurting readability
+
+# restriction lints
+alloc_instead_of_core = "warn"
+allow_attributes_without_reason = "warn"
+assertions_on_result_states = "warn"
+cfg_not_test = "warn"
+clone_on_ref_ptr = "warn"
+cognitive_complexity = "warn"
+create_dir = "warn"
+dbg_macro = "warn"
+decimal_literal_representation = "warn"
+default_union_representation = "warn"
+deref_by_slicing = "warn"
+disallowed_script_idents = "warn"
+doc_include_without_cfg = "warn"
+empty_drop = "warn"
+empty_enum_variants_with_brackets = "warn"
+empty_structs_with_brackets = "warn"
+filetype_is_file = "warn"
+# float_arithmetic: this crate's only float use is imgui UI state (font
+# scale slider, rainbow-text color cycling) — not a precision-critical
+# domain the restriction lint is meant to guard.
+float_arithmetic = "allow"
+float_cmp_const = "warn"
+get_unwrap = "warn"
+if_then_some_else_none = "warn"
+# indexing_slicing: nearly every index in this crate is over a provably
+# bounded domain (enum discriminants, `& 3` masks, vtable slot counts,
+# skin-combo indices bounded by a Vec's own len()) — a real game process
+# already aborts on panic (`panic = "abort"`), and `.get().unwrap()` would
+# be the same panic with more code, not a safety improvement.
+indexing_slicing = "allow"
+infinite_loop = "warn"
+inline_asm_x86_att_syntax = "warn"
+inline_asm_x86_intel_syntax = "warn"
+large_include_file = "warn"
+lossy_float_literal = "warn"
+map_with_unused_argument_over_ranges = "warn"
+mem_forget = "warn"
+missing_assert_message = "warn"
+mixed_read_write_in_expression = "warn"
+modulo_arithmetic = "warn"
+multiple_unsafe_ops_per_block = "warn"
+mutex_atomic = "warn"
+mutex_integer = "warn"
+needless_raw_strings = "warn"
+non_zero_suggestions = "warn"
+pathbuf_init_then_push = "warn"
+pointer_format = "warn"
+precedence_bits = "warn"
+pub_without_shorthand = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
+redundant_test_prefix = "warn"
+redundant_type_annotations = "warn"
+ref_patterns = "warn"
+renamed_function_params = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+return_and_then = "warn"
+str_to_string = "warn"
+string_add = "warn"
+string_lit_chars_any = "warn"
+string_slice = "warn"
+suspicious_xor_used_as_pow = "warn"
+try_err = "warn"
+undocumented_unsafe_blocks = "warn"
+uninlined_format_args = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_safety_doc = "warn"
+unnecessary_self_imports = "warn"
+unneeded_field_pattern = "warn"
+unused_result_ok = "warn"
+verbose_file_reads = "warn"
+
+# cargo lints
+negative_feature_names = "warn"
+redundant_feature_names = "warn"
+wildcard_dependencies = "warn"
+
+# ENABLE BY THE FIRST MAJOR VERSION!!
+# todo = "warn"
+# unimplemented = "warn"
+# panic = "warn"
+# panic_in_result_fn = "warn"
+#
+# cargo_common_metadata = "warn"
+# multiple_crate_versions = "warn" # a controversial option since it's really difficult to maintain
+
+disallowed_methods = "deny"
+
+nursery = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+type_repetition_in_bounds = "allow"   # sometimes, it's better for readability this way
+
+# Overrides on top of the pedantic group above: this crate's numeric casts
+# are overwhelmingly between small, provably bounded values (skin-combo
+# indices, table lengths, vtable slot counts) that cannot realistically
+# overflow/wrap/lose sign in practice — these pedantic cast lints are aimed
+# at genuinely risky conversions (e.g. untrusted external sizes), which this
+# codebase doesn't have at these call sites.
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
