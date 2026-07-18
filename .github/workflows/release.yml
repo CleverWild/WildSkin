@@ -73,3 +73,16 @@ jobs:
           target/x86_64-pc-windows-msvc/release/WildSkin.dll
           target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
           --generate-notes
+
+      # Scan the published artifacts and append the VirusTotal links to the
+      # release notes (github.ref is a tag here, so update_release_body works).
+      - name: Scan on VirusTotal
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: crazy-max/ghaction-virustotal@v4
+        with:
+          vt_api_key: ${{ secrets.VT_API_KEY }}
+          update_release_body: true
+          files: |
+            target/x86_64-pc-windows-msvc/release/WildSkin.dll
+            target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
+
