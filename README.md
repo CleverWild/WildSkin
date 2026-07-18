@@ -52,8 +52,7 @@ the DLL.
 
 Downloads and `rustup toolchain link`s the pinned `ollvm` toolchain that
 `build --obfuscate` needs. Idempotent (skips the download if already
-extracted) — run it once per machine before your first obfuscated build. CI
-runs it automatically.
+extracted). `cargo xtask build --obfuscate` runs it automatically.
 
 ## Usage
 
