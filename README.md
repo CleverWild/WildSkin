@@ -31,6 +31,11 @@ used instead, those two are interchangeable.
 
 ## Usage
 
+> [!NOTE]
+> Neither `WildSkin.dll` nor `WildSkin_Injector.exe` require disabling Windows Defender
+> or most other antivirus software. Both are tested clean on VirusTotal
+> and local with Defender's all flags left on.
+
 1. Build from source (above) or grab a build from
    [Releases](https://github.com/CleverWild/WildSkin/releases/latest), once
    one is published.
