@@ -1,9 +1,10 @@
-use std::io::{BufRead, BufReader, Write};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use clap::Args;
+
+use crate::StreamingCommandExt as _;
 
 /// The `irobf` flag set applied to both crates by `--obfuscate`.
 ///
@@ -56,13 +57,13 @@ pub fn run(args: &BuildArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     let mut cargo_args = vec![];
     if args.obfuscate {
+        crate::cmd_setup_ollvm::run()?;
         cargo_args.push("+ollvm");
     }
     cargo_args.extend(["build", "-p", "wildskin", "--lib"]);
     if has_injector {
         cargo_args.extend(["-p", "wildskin-injector", "--bin", "WildSkin_Injector"]);
     }
-    cargo_args.push("--message-format=json");
     if args.release || args.obfuscate {
         cargo_args.push("--release");
     }
@@ -79,32 +80,7 @@ pub fn run(args: &BuildArgs) -> Result<(), Box<dyn std::error::Error>> {
         command.env("RUSTFLAGS", rustflags);
     }
 
-    // stderr (cargo's "Compiling ..." progress) goes straight to the
-    // console for real-time output; stdout (the JSON message stream) is
-    // piped so diagnostics can be rendered live and artifacts collected.
-    command.stdout(Stdio::piped()).stderr(Stdio::inherit());
-    let mut child = command.spawn()?;
-    let stdout = BufReader::new(child.stdout.take().unwrap());
-    let mut json_lines = Vec::new();
-    for line in stdout.lines() {
-        let line = line?;
-        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line)
-            && msg.get("reason").and_then(serde_json::Value::as_str) == Some("compiler-message")
-            && let Some(rendered) = msg
-                .get("message")
-                .and_then(|m| m.get("rendered"))
-                .and_then(serde_json::Value::as_str)
-        {
-            print!("{rendered}");
-            std::io::stdout().flush()?;
-        }
-        json_lines.push(line);
-    }
-    let status = child.wait()?;
-    if !status.success() {
-        return Err("cargo build failed".into());
-    }
-    let json_output = json_lines.join("\n");
+    let json_output = command.run_rendering_cargo_json()?.join("\n");
 
     let dll_path = find_artifact(json_output.as_bytes(), "cdylib", "WildSkin")
         .ok_or("could not find WildSkin.dll in cargo's build output")?;

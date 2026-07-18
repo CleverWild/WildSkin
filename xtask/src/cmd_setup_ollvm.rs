@@ -52,7 +52,10 @@ fn download_and_extract(install_dir: &Path) -> Result<(), Box<dyn std::error::Er
     println!("Downloading {url} ...");
     let mut response = ureq::get(&url).call()?;
     let mut zip_bytes = Vec::new();
-    response.body_mut().as_reader().read_to_end(&mut zip_bytes)?;
+    response
+        .body_mut()
+        .as_reader()
+        .read_to_end(&mut zip_bytes)?;
 
     println!("Extracting to {} ...", install_dir.display());
     std::fs::create_dir_all(install_dir)?;
@@ -72,6 +75,9 @@ fn link_toolchain(stage1: &Path) -> Result<(), Box<dyn std::error::Error>> {
     if !status.success() {
         return Err("rustup toolchain link failed".into());
     }
-    println!("Linked toolchain '{TOOLCHAIN_NAME}' -> {}", stage1.display());
+    println!(
+        "Linked toolchain '{TOOLCHAIN_NAME}' -> {}",
+        stage1.display()
+    );
     Ok(())
 }
