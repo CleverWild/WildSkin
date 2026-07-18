@@ -14,8 +14,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      # restore/save split (not plain `cache@v4`) so the cache is still saved
+      # when a later step fails — `cache@v4`'s save is `post-if: success()`.
+      - name: Restore cargo registry
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -45,13 +48,15 @@ jobs:
       # itself is what's cached here, keyed on the file that pins its
       # version (RELEASE_TAG in cmd_setup_ollvm.rs) so a version bump busts
       # the cache automatically instead of silently reusing a stale build.
-      - name: Cache ollvm toolchain
-        uses: actions/cache@v4
+      - name: Restore ollvm toolchain
+        id: ollvm-cache
+        uses: actions/cache/restore@v4
         with:
           path: target/ollvm-toolchain
           key: ollvm-${{ hashFiles('xtask/src/cmd_setup_ollvm.rs') }}
 
       - name: Setup ollvm toolchain
+        id: setup-ollvm
         run: cargo xtask setup-ollvm
 
       - name: Build
@@ -86,3 +91,22 @@ jobs:
             target/x86_64-pc-windows-msvc/release/WildSkin.dll
             target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
 
+      # Saves run even on failure (`if: always()`), so a failed build still
+      # persists what it already downloaded for the next attempt. Only save the
+      # ollvm toolchain if its download actually succeeded, or a half-downloaded
+      # tree would poison the cache. Skip when the exact key was already a hit.
+      - name: Save ollvm toolchain
+        if: always() && steps.setup-ollvm.outcome == 'success' && steps.ollvm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: target/ollvm-toolchain
+          key: ollvm-${{ hashFiles('xtask/src/cmd_setup_ollvm.rs') }}
+
+      - name: Save cargo registry
+        if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-registry-${{ hashFiles('**/Cargo.lock') }}
