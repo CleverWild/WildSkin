@@ -119,10 +119,12 @@ jobs:
           target/x86_64-pc-windows-msvc/release/WildSkin.dll
           target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
           --generate-notes
-
-      # Scan the published artifacts and append the VirusTotal links to the
-      # release notes (github.ref is a tag here, so update_release_body works).
+      # Scan the published artifacts on VirusTotal. `update_release_body`
+      # (the action's own feature for this) only fires for a `release`
+      # event, not the `push`-tag event this workflow runs on — so the
+      # links are appended manually in the next step instead.
       - name: Scan on VirusTotal
+        id: virustotal
         if: startsWith(github.ref, 'refs/tags/')
         uses: crazy-max/ghaction-virustotal@v4
         with:
@@ -131,3 +133,18 @@ jobs:
           files: |
             target/x86_64-pc-windows-msvc/release/WildSkin.dll
             target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
+
+      - name: Append VirusTotal links to release notes
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # analysis output is `file=url,file=url`; split on the first `=`
+          # only, since the VT URLs themselves end in a base64 `==`.
+          $links = "${{ steps.virustotal.outputs.analysis }}" -split ',' | ForEach-Object {
+            $file, $url = $_ -split '=', 2
+            "- [$file]($url)"
+          }
+          $body = gh release view "${{ github.ref_name }}" --json body -q .body
+          @($body, "", "## VirusTotal") + $links | Set-Content -Path vt-notes.md
+          gh release edit "${{ github.ref_name }}" --notes-file vt-notes.md
