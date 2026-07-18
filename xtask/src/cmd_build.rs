@@ -42,11 +42,11 @@ pub struct BuildArgs {
     #[arg(long)]
     obfuscate: bool,
 
-    /// Sets output to temp dir and opens it.
+    /// Sets output to temp dir instead of `target/`.
     #[arg(long)]
     temp: bool,
 
-    /// Opens the output dir.
+    /// Opens the output dir. Combined with `--temp`, the dir is deleted once you close that window.
     #[arg(short, long)]
     open: bool,
 }
