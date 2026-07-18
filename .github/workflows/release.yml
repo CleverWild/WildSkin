@@ -18,7 +18,11 @@ jobs:
     needs: ci
     runs-on: windows-latest
     steps:
+      # fetch-depth: 0 — need full history + all tags for the changelog step
+      # to diff against the previous release tag.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Fail fast: `gh release create` only errors on a duplicate tag at the
       # very end, after the ~30-min obfuscated build. Check up front so a
@@ -119,6 +123,22 @@ jobs:
           target/x86_64-pc-windows-msvc/release/WildSkin.dll
           target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
           --generate-notes
+
+      # `--generate-notes` above pulls from merged PRs, which this repo
+      # doesn't use (direct pushes to main) — so it never has real content
+      # beyond the "Full Changelog" link. Build an actual commit list instead.
+      - name: Generate changelog
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $prevTag = git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>$null
+          $range = if ($prevTag) { "$prevTag..${{ github.ref_name }}" } else { "${{ github.ref_name }}" }
+          $commits = git log $range --no-merges --pretty=format:"- %s (%h)"
+          $body = gh release view "${{ github.ref_name }}" --json body -q .body
+          @($body, "", "## Changes") + $commits | Set-Content -Path changelog-notes.md
+          gh release edit "${{ github.ref_name }}" --notes-file changelog-notes.md
+
       # Scan the published artifacts on VirusTotal. `update_release_body`
       # (the action's own feature for this) only fires for a `release`
       # event, not the `push`-tag event this workflow runs on — so the
@@ -129,7 +149,6 @@ jobs:
         uses: crazy-max/ghaction-virustotal@v4
         with:
           vt_api_key: ${{ secrets.VT_API_KEY }}
-          update_release_body: true
           files: |
             target/x86_64-pc-windows-msvc/release/WildSkin.dll
             target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
