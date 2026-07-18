@@ -1,5 +1,6 @@
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::os::windows::process::CommandExt;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use clap::Args;
@@ -44,6 +45,10 @@ pub struct BuildArgs {
     /// Sets output to temp dir and opens it.
     #[arg(long)]
     temp: bool,
+
+    /// Opens the output dir.
+    #[arg(short, long)]
+    open: bool,
 }
 
 pub fn run(args: &BuildArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -73,6 +78,7 @@ pub fn run(args: &BuildArgs) -> Result<(), Box<dyn std::error::Error>> {
             .join(" ");
         command.env("RUSTFLAGS", rustflags);
     }
+
     // stderr (cargo's "Compiling ..." progress) goes straight to the
     // console for real-time output; stdout (the JSON message stream) is
     // piped so diagnostics can be rendered live and artifacts collected.
@@ -103,6 +109,7 @@ pub fn run(args: &BuildArgs) -> Result<(), Box<dyn std::error::Error>> {
     let dll_path = find_artifact(json_output.as_bytes(), "cdylib", "WildSkin")
         .ok_or("could not find WildSkin.dll in cargo's build output")?;
     println!("Built:  {}", dll_path.display());
+
     let exe_path = if has_injector {
         let exe_path = find_artifact(json_output.as_bytes(), "bin", "WildSkin_Injector")
             .ok_or("could not find WildSkin_Injector.exe in cargo's build output")?;
@@ -112,19 +119,67 @@ pub fn run(args: &BuildArgs) -> Result<(), Box<dyn std::error::Error>> {
         println!("Skipped: WildSkin-injector (private component not checked out here)");
         None
     };
-    println!("Output: {}", dll_path.parent().unwrap().display());
+
+    let output_dir = if args.temp {
+        std::env::temp_dir().join("wildskin-build")
+    } else {
+        dll_path.parent().unwrap().to_path_buf()
+    };
 
     if args.temp {
-        let temp_dir = std::env::temp_dir().join("wildskin-build");
-        std::fs::create_dir_all(&temp_dir)?;
-        std::fs::copy(&dll_path, temp_dir.join(dll_path.file_name().unwrap()))?;
+        std::fs::create_dir_all(&output_dir)?;
+        std::fs::copy(&dll_path, output_dir.join(dll_path.file_name().unwrap()))?;
         if let Some(exe_path) = &exe_path {
-            std::fs::copy(exe_path, temp_dir.join(exe_path.file_name().unwrap()))?;
+            std::fs::copy(exe_path, output_dir.join(exe_path.file_name().unwrap()))?;
         }
-        println!("Copied to: {}", temp_dir.display());
-        // Fire-and-forget: explorer.exe often exits nonzero even on success.
-        let _ = Command::new("explorer").arg(&temp_dir).spawn();
+        println!("Copied to: {}", output_dir.display());
     }
+
+    if args.temp && args.open {
+        // Browse-then-discard: delete the temp dir once the user closes its window.
+        if let Err(e) = spawn_temp_cleanup_watcher(&output_dir) {
+            eprintln!("warning: could not start cleanup watcher: {e}");
+        } else {
+            println!(
+                "Opened {}; it will be deleted when you close the Explorer window.",
+                output_dir.display()
+            );
+        }
+    } else if args.open {
+        // Fire-and-forget: explorer.exe often exits nonzero even on success.
+        let _ = Command::new("explorer").arg(&output_dir).spawn();
+    }
+
+    Ok(())
+}
+
+/// The `--temp --open` watcher script. Opens `-Dir` in Explorer, waits for that
+/// window to close, then deletes the folder. It pins the folder by an OS handle
+/// (`GetFinalPathNameByHandle`), not its name, so a rename in Explorer is still
+/// cleaned up — Explorer's own reported path goes stale after a rename, the
+/// handle doesn't. Run via `-File` so no cross-language quoting is needed.
+const CLEANUP_WATCHER_PS1: &str = include_str!("../cleanup-watcher.ps1");
+
+/// Writes [`CLEANUP_WATCHER_PS1`] to a fixed temp path and launches it detached
+/// and hidden, so the build command returns immediately.
+fn spawn_temp_cleanup_watcher(dir: &Path) -> std::io::Result<()> {
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let script_path = std::env::temp_dir().join("wildskin-cleanup-watch.ps1");
+    std::fs::write(&script_path, CLEANUP_WATCHER_PS1)?;
+    Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+        ])
+        .arg(&script_path)
+        .arg("-Dir")
+        .arg(dir)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()?;
     Ok(())
 }
 
