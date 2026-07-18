@@ -224,7 +224,8 @@ mod tests {
     fn as_ref_slice_yields_references_to_the_same_objects() {
         let mut a = 10i32;
         let mut b = 20i32;
-        let (pa, pb): (*mut i32, *mut i32) = (&raw mut a, &raw mut b);
+        let pa: *mut i32 = &raw mut a;
+        let pb: *mut i32 = &raw mut b;
         let ptrs = [pa, pb];
         // SAFETY: both pointers are non-null and point at the live `a`/`b`.
         let refs = unsafe { as_ref_slice(&ptrs) };

@@ -237,9 +237,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("wildskin_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
 
-        let mut cfg = Config::default();
-        cfg.rainbow_text = true;
-        cfg.font_scale = 1.5;
+        let mut cfg = Config {
+            rainbow_text: true,
+            font_scale: 1.5,
+            ..Config::default()
+        };
         cfg.current_combo_enemy_skin_index.insert(123_456_789, 3);
         cfg.save(&dir, Some("Ahri"));
 
@@ -252,13 +254,17 @@ mod tests {
         let mut loaded = Config::default();
         loaded.load(&dir, Some("Ahri"));
         assert!(loaded.rainbow_text);
-        assert_eq!(loaded.font_scale, 1.5);
+        assert!(
+            (loaded.font_scale - 1.5).abs() < f32::EPSILON,
+            "font_scale round-trip mismatch: {}",
+            loaded.font_scale
+        );
         assert_eq!(
             loaded.current_combo_enemy_skin_index.get(&123_456_789),
             Some(&3)
         );
 
-        std::fs::remove_dir_all(&dir).ok();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -267,7 +273,11 @@ mod tests {
             std::env::temp_dir().join(format!("wildskin_test_missing_{}", std::process::id()));
         let mut cfg = Config::default();
         cfg.load(&dir, None);
-        assert_eq!(cfg.font_scale, 1.0);
+        assert!(
+            (cfg.font_scale - 1.0).abs() < f32::EPSILON,
+            "font_scale should keep its default: {}",
+            cfg.font_scale
+        );
         assert!(cfg.menu_key.is_set());
     }
 
@@ -277,12 +287,16 @@ mod tests {
             std::env::temp_dir().join(format!("wildskin_test_preserve_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
 
-        let mut cfg_a = Config::default();
-        cfg_a.current_combo_skin_index = 5;
+        let cfg_a = Config {
+            current_combo_skin_index: 5,
+            ..Config::default()
+        };
         cfg_a.save(&dir, Some("Ahri"));
 
-        let mut cfg_b = Config::default();
-        cfg_b.current_combo_skin_index = 2;
+        let cfg_b = Config {
+            current_combo_skin_index: 2,
+            ..Config::default()
+        };
         cfg_b.save(&dir, Some("Zed"));
 
         let raw = std::fs::read_to_string(dir.join("WildSkin64")).unwrap();
@@ -308,6 +322,6 @@ mod tests {
             "save(None) must not wipe Zed's key: {raw}"
         );
 
-        std::fs::remove_dir_all(&dir).ok();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
