@@ -20,7 +20,7 @@ jobs:
     steps:
       # fetch-depth: 0 — need full history + all tags for the changelog step
       # to diff against the previous release tag.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -42,7 +42,7 @@ jobs:
       # The injector is a separate private repo, absent from the public
       # checkout; pull it into WildSkin-injector/ so xtask picks it up.
       - name: Checkout injector
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: CleverWild/WildSkin-injector
           path: WildSkin-injector
@@ -86,7 +86,7 @@ jobs:
       # the cache automatically instead of silently reusing a stale build.
       - name: Restore ollvm toolchain
         id: ollvm-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: target/ollvm-toolchain
           key: ollvm-${{ hashFiles('xtask/src/cmd_setup_ollvm.rs') }}
@@ -101,7 +101,7 @@ jobs:
       # tree would poison the cache. Skip when the exact key was already a hit.
       - name: Save ollvm toolchain
         if: always() && steps.setup-ollvm.outcome == 'success' && steps.ollvm-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: target/ollvm-toolchain
           key: ollvm-${{ hashFiles('xtask/src/cmd_setup_ollvm.rs') }}
@@ -109,7 +109,7 @@ jobs:
       - name: Build
         run: cargo xtask build --obfuscate
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: WildSkin
           path: |
@@ -148,7 +148,7 @@ jobs:
       - name: Scan on VirusTotal
         id: virustotal
         if: startsWith(github.ref, 'refs/tags/')
-        uses: crazy-max/ghaction-virustotal@v4
+        uses: crazy-max/ghaction-virustotal@v5
         with:
           vt_api_key: ${{ secrets.VT_API_KEY }}
           files: |
