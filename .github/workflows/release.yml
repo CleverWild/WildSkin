@@ -39,18 +39,6 @@ jobs:
           }
           exit 0
 
-      # restore/save split (not plain `cache@v4`) so the cache is still saved
-      # when a later step fails — `cache@v4`'s save is `post-if: success()`.
-      - name: Restore cargo registry
-        id: cargo-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-registry-
-
       # The injector is a separate private repo, absent from the public
       # checkout; pull it into WildSkin-injector/ so xtask picks it up.
       - name: Checkout injector
@@ -64,6 +52,29 @@ jobs:
       # so `workspace = true` inheritance resolves and it builds.
       - name: Add injector to workspace
         run: (Get-Content Cargo.toml -Raw) -replace '"WildSkin-rs",', '"WildSkin-rs", "WildSkin-injector",' | Set-Content Cargo.toml -NoNewline
+
+      # Caches ~/.cargo + the compiled target dir (the ~200 dependency crates),
+      # which the manual registry-only cache never did — that's the bulk of the
+      # ~30-min Build below. Placed after the injector is in the workspace so
+      # its deps are part of the cached set.
+      #
+      # `key` busts the whole target cache when the ollvm toolchain version
+      # changes (RELEASE_TAG in cmd_setup_ollvm.rs): the --obfuscate build
+      # compiles deps with that toolchain, so stale .rlibs from an older
+      # obfuscator must not be reused. rust-cache keys on Cargo.lock + the
+      # default rustc, but not on the separately-linked ollvm toolchain.
+      #
+      # No conflict with the ollvm cache below: rust-cache's post-job cleanup
+      # strips target/ollvm-toolchain (keeps only build/.fingerprint/deps per
+      # dir), but that runs after "Save ollvm toolchain" has already persisted
+      # it, so the toolchain is neither lost nor duplicated into this cache.
+      #
+      # cache-on-failure: a build that dies after compiling deps still saves
+      # them for the next attempt (the manual restore/save split did this too).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ollvm-${{ hashFiles('xtask/src/cmd_setup_ollvm.rs') }}
+          cache-on-failure: true
 
       # windows-latest ships Rust/rustup preinstalled; rustup auto-installs
       # the toolchain pinned by rust-toolchain.toml on first cargo invocation.
@@ -97,15 +108,6 @@ jobs:
 
       - name: Build
         run: cargo xtask build --obfuscate
-
-      - name: Save cargo registry
-        if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
       - uses: actions/upload-artifact@v4
         with:
