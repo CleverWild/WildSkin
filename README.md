@@ -3,7 +3,7 @@
 > [!IMPORTANT]
 > Please do not use Issues to post advertisements, promotions, or repeated recommendations of similar paid products. Whether those products work or not is unrelated to this project, but abusive language, spam, or repeatedly posting through alternate accounts will not be accepted.
 
-## **Disclaimer**
+## Disclaimer
 
 **This project is for learning and technical exchange purposes only. Commercial use or any illegal activity is strictly prohibited. Any direct or indirect consequences arising from the use of this project shall be borne solely by the user, and the author assumes no responsibility.**
 
@@ -28,6 +28,32 @@ from this repository; grab it from
 If you don't trust this project's closed-source injector, the injector from
 [hydy100/R3nzSkin](https://github.com/hydy100/R3nzSkin)'s releases can be
 used instead, those two are interchangeable.
+
+### `cargo xtask` reference
+
+All builds go through the `xtask` crate rather than plain `cargo build`, so
+the DLL/exe output paths get resolved and printed for you instead of having
+to dig through `target/`.
+
+**`cargo xtask build [flags]`**
+
+| Flag | Effect |
+| --- | --- |
+| `-r`, `--release` | Release profile (optimized, LTO, `panic = "abort"`) instead of the faster debug profile. |
+| `--obfuscate` | Builds with the `ollvm` toolchain and Arkari `irobf` obfuscation passes; implies `--release`. |
+| `--temp` | Copies the built DLL/exe to a temp dir instead of leaving them under `target/`. |
+| `-o`, `--open` | Opens the output dir in Explorer after building. Combined with `--temp`, the temp dir is deleted once you close that Explorer window. |
+
+`WildSkin_Injector.exe` is built alongside the DLL only when
+`WildSkin-injector/` is checked out; a plain public-repo clone builds just
+the DLL.
+
+**`cargo xtask setup-ollvm`**
+
+Downloads and `rustup toolchain link`s the pinned `ollvm` toolchain that
+`build --obfuscate` needs. Idempotent (skips the download if already
+extracted) — run it once per machine before your first obfuscated build. CI
+runs it automatically.
 
 ## Usage
 
