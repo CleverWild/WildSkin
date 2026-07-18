@@ -20,6 +20,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Fail fast: `gh release create` only errors on a duplicate tag at the
+      # very end, after the ~30-min obfuscated build. Check up front so a
+      # re-run against an existing release dies in seconds, not half an hour.
+      - name: Ensure the release does not already exist
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${{ github.ref_name }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "::error::A release for ${{ github.ref_name }} already exists — delete it or bump the tag."
+            exit 1
+          }
+          exit 0
+
       # restore/save split (not plain `cache@v4`) so the cache is still saved
       # when a later step fails — `cache@v4`'s save is `post-if: success()`.
       - name: Restore cargo registry
