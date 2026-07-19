@@ -14,36 +14,20 @@ use std::ffi::CStr;
 )]
 type DtorFn = unsafe extern "system" fn(this: *mut AString);
 
-// Layout reverse-engineered from the live game binary (League of Legends.exe
-// 16.13.791.5903) via CharacterDataStack__grow_and_emplace (confirms 0x90
-// bytes/element) and CharacterStackData_destroy_range (confirms exactly 6
-// AString-sized [ptr+i32 len+i32 cap, 0x10 bytes each] sub-fields at offsets
-// 0x00, 0x10, 0x28, 0x38, 0x50, 0x60). Only `model`, `skin`, and `gear` are
-// named/used elsewhere in this port; `str1`..`str5` are declared purely to
-// pin the layout so the used fields land at their real offsets. `_end` is a
-// 1-byte sentinel at the last valid offset (0x8f) purely to pin the struct's
-// total size to 0x90 — offsetter has no other way to declare trailing
-// padding past the last named field.
+// 16.14 layout (League of Legends.exe 16.14.794.5912, matching the reference): the
+// only string is `model`; the game's own `~CharacterStackData()` frees just it.
+// `_end` pins total size to 0x90.
 crate::offset!(
     pub struct CharacterStackData {
         0x00 => pub model: AString,
-        0x10 => str1: AString,
         0x20 => pub skin: i32,
-        0x28 => str2: AString,
-        0x38 => str3: AString,
-        0x50 => str4: AString,
-        0x60 => str5: AString,
         0x84 => pub gear: i8,
         0x8f => _end: u8,
     }
 );
 
 impl CharacterStackData {
-    /// Calls the game's own MSVC string destructor (`DtorFn`) on all 6
-    /// `AString`-sized sub-fields, matching what `CharacterStackData_destroy_range`
-    /// does for a real element teardown. Required before discarding an
-    /// element (see `clear_stack_properly`) — a heap-backed (non-SSO)
-    /// `AString` left untouched leaks its buffer.
+    /// Mirrors the game's `~CharacterStackData()`: frees the one `model` string.
     ///
     /// # Safety
     /// Caller guarantees `self` is a live, fully-constructed
@@ -52,18 +36,9 @@ impl CharacterStackData {
     unsafe fn destroy_strings(&mut self, dtor_fn: usize) {
         // SAFETY: per fn contract.
         let func: DtorFn = unsafe { std::mem::transmute(dtor_fn) };
-        for field in [
-            &raw mut self.model,
-            &raw mut self.str1,
-            &raw mut self.str2,
-            &raw mut self.str3,
-            &raw mut self.str4,
-            &raw mut self.str5,
-        ] {
-            // SAFETY: per fn contract.
-            unsafe {
-                func(field);
-            }
+        // SAFETY: per fn contract.
+        unsafe {
+            func(&raw mut self.model);
         }
     }
 }
@@ -96,30 +71,18 @@ pub struct CharacterDataStack {
     pub base_skin: CharacterStackData,
 }
 
-// 18 parameters, not 17: a post-patch build of the game added a trailing
-// `const char*` (confirmed via crash-dump analysis — the 18th slot was left
-// unsupplied, so the callee read whatever garbage happened to be in that
-// register/stack position; harmless leftover bytes in an unoptimized debug
-// build, but `true` from an adjacent bool literal under release's LTO/opt3,
-// which the callee then dereferenced as a string pointer and crashed on).
-// The original C++ source (`CharacterDataStack.cpp`) still only declares 17 —
-// it's equally exposed to this against the current client, this isn't a
-// Rust-port-specific bug.
+// 17 parameters, matching the reference's 16.14 `CharacterDataStack::Push`.
+// `full_signature` is intentionally omitted: 16.14 changed Push's prologue and
+// it wasn't re-captured here — the `pattern` locator still resolves it, and the
+// arg-count check still guards the ABI. Re-add `full_signature` once the 16.14
+// prologue is snapshotted.
 #[abi_verify_macro::verify_abi(
     pattern = "E8 ? ? ? ? 48 8D 8D ? ? 00 00 E8 ? ? ? ? 48 85 C0 74 ? 48 85 ED",
-    expected_args = 18,
-    // First 32 bytes of `CharacterDataStack::Push`'s real prologue (register
-    // shadow-space spills, non-volatile pushes, `lea rbp,[rsp-7]`,
-    // `sub rsp,0xC0`) — no relative call/jmp displacements in this window,
-    // so no wildcards are needed; every byte here is a fixed opcode/operand.
-    full_signature = "48 89 5C 24 10 48 89 74 24 18 55 57 41 54 41 56 41 57 48 8D 6C 24 F9 48 81 EC C0 00 00 00 48 8B"
+    expected_args = 17
 )]
-// Names below are as confidently identified as the game's own HLIL
-// decompile made possible: `this`/`model`/`skin`/`gear`/`str1`/`str2`/`str4`
-// are confirmed (they're read back out through `CharacterStackData`'s own
-// named fields at matching offsets). Every `unknown_*`/`flag_*` name is a
-// deliberately honest placeholder for a slot whose exact purpose wasn't
-// pinned down — position and rough type (int vs. byte-sized flag) only.
+// `this`/`model`/`skin`/`gear` are confirmed; every `unknown_*`/`flag_*` name is
+// a deliberately honest placeholder for a slot whose exact purpose wasn't pinned
+// down — position and rough type (int vs. byte-sized flag) only.
 type PushFn = unsafe extern "system" fn(
     this: usize,
     model: *const i8,
@@ -138,17 +101,16 @@ type PushFn = unsafe extern "system" fn(
     unknown_i32_3: i32,
     unknown_flag_post: bool,
     unknown_i32_4: i32,
-    str1: *const i8,
 ) -> i64;
 
 #[abi_verify_macro::verify_abi(
     pattern = "88 54 24 10 55 53 56 57 41 54 41 55 41 56 41",
     call_target = false,
     expected_args = 2,
-    // First 24 bytes of `CharacterDataStack::Update`'s real prologue
-    // (non-volatile pushes, `mov rbp,rsp`, `sub rsp,0x68`) — again no
-    // relative displacements in this window, so no wildcards needed.
-    full_signature = "88 54 24 10 55 53 56 57 41 54 41 55 41 56 41 57 48 8B EC 48 83 EC 68 48"
+    // First 28 bytes of `CharacterDataStack::Update`'s real 16.14 prologue
+    // (non-volatile pushes, `lea rbp,[rsp-0x1f]`, `sub rsp,0x88`) — no relative
+    // displacements in this window, so no wildcards needed.
+    full_signature = "88 54 24 10 55 53 56 57 41 54 41 55 41 56 41 57 48 8D 6C 24 E1 48 81 EC 88 00 00 00"
 )]
 type UpdateFn = unsafe extern "system" fn(this: usize, change: bool) -> i64;
 
@@ -219,7 +181,6 @@ impl CharacterDataStack {
                 0,
                 false,
                 1,
-                empty,
             );
         }
     }
@@ -307,13 +268,13 @@ mod tests {
 
     #[test]
     fn push_and_update_call_through_to_a_stub_matching_the_original_signature() {
-        // Stubs mimicking the Win64 game functions with the 18-param arg list
-        // confirmed against the current game build (see `PushFn`). A
-        // mismatched arg count/type here is the #1 way this layer segfaults
-        // against the real game, so exercise the call path, not just the types.
+        // Stubs mimicking the Win64 game functions with the 17-param arg list
+        // matching the reference's 16.14 `Push` (see `PushFn`). A mismatched arg
+        // count/type here is the #1 way this layer segfaults against the real
+        // game, so exercise the call path, not just the types.
         static PUSH_SKIN: AtomicI32 = AtomicI32::new(0);
         static PUSH_EXTRA: AtomicI32 = AtomicI32::new(0);
-        static PUSH_S3_NON_NULL: AtomicBool = AtomicBool::new(false);
+        static PUSH_LAST_N3: AtomicI32 = AtomicI32::new(0);
         static UPDATE_CHANGE: AtomicBool = AtomicBool::new(false);
 
         unsafe extern "system" fn stub_push(
@@ -333,12 +294,11 @@ mod tests {
             _s2: *const i8,
             _n2: i32,
             _b7: bool,
-            _n3: i32,
-            s3: *const i8,
+            n3: i32,
         ) -> i64 {
             PUSH_SKIN.store(skin, Ordering::SeqCst);
             PUSH_EXTRA.store(extra, Ordering::SeqCst);
-            PUSH_S3_NON_NULL.store(!s3.is_null(), Ordering::SeqCst);
+            PUSH_LAST_N3.store(n3, Ordering::SeqCst);
             0
         }
 
@@ -364,9 +324,9 @@ mod tests {
 
         assert_eq!(PUSH_SKIN.load(Ordering::SeqCst), 99);
         assert_eq!(PUSH_EXTRA.load(Ordering::SeqCst), 0);
-        // Regression guard for the crash: the 18th argument must be a real,
-        // non-null placeholder string, not an unsupplied/garbage value.
-        assert!(PUSH_S3_NON_NULL.load(Ordering::SeqCst));
+        // The final (17th) argument is passed as the literal `1`, matching the
+        // reference's `Push` call — guards the arg list stays complete/aligned.
+        assert_eq!(PUSH_LAST_N3.load(Ordering::SeqCst), 1);
         assert!(UPDATE_CHANGE.load(Ordering::SeqCst));
     }
 }

@@ -97,7 +97,7 @@ pub unsafe fn handle_keydown(vk_code: i32) {
                         // SAFETY: `off`'s offsets/function addresses are
                         // correct for `p_ref`.
                         unsafe {
-                            p_ref.change_skin(off.fields.character_data_stack, off.fields.skin_id, off.fns.character_data_stack_push, off.fns.msvc_string_dtor, &c_model, entry.skin_id, &state.database.special_skins);
+                            p_ref.change_skin(off.fields.character_data_stack, off.fields.skin_id, off.fns.character_data_stack_push, off.fns.character_data_stack_update, off.fns.msvc_string_dtor, &c_model, entry.skin_id, &state.database.special_skins);
                         }
                     }
             drop(config);
@@ -125,7 +125,7 @@ pub unsafe fn handle_keydown(vk_code: i32) {
                         // SAFETY: `off`'s offsets/function addresses are
                         // correct for `p_ref`.
                         unsafe {
-                            p_ref.change_skin(off.fields.character_data_stack, off.fields.skin_id, off.fns.character_data_stack_push, off.fns.msvc_string_dtor, &c_model, entry.skin_id, &state.database.special_skins);
+                            p_ref.change_skin(off.fields.character_data_stack, off.fields.skin_id, off.fns.character_data_stack_push, off.fns.character_data_stack_update, off.fns.msvc_string_dtor, &c_model, entry.skin_id, &state.database.special_skins);
                         }
                     }
             } else {

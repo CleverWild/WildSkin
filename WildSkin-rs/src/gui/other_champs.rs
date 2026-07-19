@@ -90,6 +90,7 @@ pub(super) fn render_other_champs_tab(
                         off.fields.character_data_stack,
                         off.fields.skin_id,
                         off.fns.character_data_stack_push,
+                        off.fns.character_data_stack_update,
                         off.fns.msvc_string_dtor,
                         &c_model,
                         skin.skin_id,

@@ -96,11 +96,10 @@ pub(super) const GOLD_REDIRECT_FN_SIG: Signature = Signature {
     relative: false,
     additional: 0,
 };
-/// The game's own MSVC string destructor, reverse-engineered from
-/// `CharacterStackData_destroy_range`'s calls into it. Matches the
-/// destructor's own entry prologue directly (no call-rel32), so `resolve()`'s
-/// default branch returns the match address as-is. Used by `change_skin`'s
-/// clear+push pipeline to free discarded stack elements' strings.
+/// The game's own MSVC string destructor. Matches the destructor's own entry
+/// prologue directly (no call-rel32), so `resolve()`'s default branch returns
+/// the match address as-is. Used by the Lux/Sona chroma clear path in
+/// `check_special_skins` to free a discarded stack element's `model` string.
 pub(super) const MSVC_STRING_DTOR_SIG: Signature = Signature {
     patterns: &["F6 41 0C 01 74 08 48 8B 09"],
     sub_base: true,
@@ -148,8 +147,8 @@ mod tests {
         // Original had 14 in Memory::sigs; this port drops the 2 that only
         // existed to hand-roll a DX11 vtable hook hudhook makes unnecessary
         // (MaterialRegistry::SwapChain + its GetSingletonPtr accessor), and
-        // adds 1 the original never needed: MSVC_STRING_DTOR_SIG, wired into
-        // `change_skin`'s clear+push pipeline (see the destructor call chain).
+        // adds 1 the original never needed: MSVC_STRING_DTOR_SIG, used by the
+        // Lux/Sona chroma clear path in `check_special_skins`.
         assert_eq!(FULL_SIGS.len(), 13);
     }
 }

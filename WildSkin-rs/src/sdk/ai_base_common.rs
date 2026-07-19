@@ -39,6 +39,10 @@ impl GameXorSlot {
     pub unsafe fn encrypt(&mut self, value: i32) {
         if self.key_initialized == 0 {
             self.xor_key = crate::crypt::derive_key();
+            // sizeof(i32): 4/4 whole u32 words, 0 trailing bytes — the game's
+            // `decrypt` reads these to undo the xor, so we must set them too.
+            self.bytes_xor_count = 1;
+            self.bytes_xor_count_8 = 0;
             self.key_initialized = 1;
             self.value_index = 0;
         }
@@ -133,22 +137,30 @@ impl AIBaseCommon {
             .map(|s| &s.kind);
 
         match kind {
-            Some(SpecialSkinKind::GearVariants { skin_id_range, reset_to_zero_on_select: true, .. })
-                if skin_id_range.contains(&skin) =>
-            {
+            Some(SpecialSkinKind::GearVariants {
+                skin_id_range,
+                reset_to_zero_on_select: true,
+                ..
+            }) if skin_id_range.contains(&skin) => {
                 stack.base_skin.gear = 0;
             }
             Some(SpecialSkinKind::ChromaSlot { skin_id, .. }) if skin == *skin_id => {
                 // SAFETY: per fn contract.
-                unsafe { stack.clear_stack_properly(dtor_fn); }
+                unsafe {
+                    stack.clear_stack_properly(dtor_fn);
+                }
                 // SAFETY: per fn contract.
-                unsafe { stack.push(push_fn, model, skin); }
+                unsafe {
+                    stack.push(push_fn, model, skin);
+                }
                 return true;
             }
             Some(SpecialSkinKind::ChromaSlot { .. }) => {
                 // Same champion (Lux/Sona), but not their chroma-slot skin.
                 // SAFETY: per fn contract.
-                unsafe { stack.clear_stack_properly(dtor_fn); }
+                unsafe {
+                    stack.clear_stack_properly(dtor_fn);
+                }
             }
             _ => {
                 if stack.base_skin.gear != -1 && champ_hash != crate::fnv::fnv1a("Kayn") {
@@ -159,26 +171,28 @@ impl AIBaseCommon {
         false
     }
 
-    /// Applies `skin`/`model` to this unit via the game's own clear+push
-    /// pipeline (the same one the in-game investigation confirmed actually
-    /// takes effect, unlike the plain `base_skin.skin = ...; update(true)`
-    /// path): the skin id is encrypted into the xor slot, then — unless a
-    /// special-skin case already handled it — the stack is cleared (calling
-    /// the real string destructor on each discarded element, so nothing
-    /// leaks) and a fresh element is pushed.
+    /// Applies `skin`/`model` to this unit, mirroring the reference's 16.14
+    /// `change_skin`: encrypt the skin id into the xor slot, set
+    /// `base_skin.skin`, then — unless `check_special_skins` handled it —
+    /// `update(true)`. (The Lux/Sona chroma cases in `check_special_skins` still
+    /// clear+push.)
     ///
     /// # Safety
     /// Caller guarantees `self` is a live `AIBaseCommon` in the game's
     /// memory, `cds_offset`/`xor_offset` are the correct byte offsets to its
-    /// `CharacterDataStack` and `GameXorSlot` fields, and `push_fn`/`dtor_fn`
-    /// are the addresses of the game's `CharacterDataStack::push` and its
-    /// MSVC string destructor.
-    #[allow(clippy::too_many_arguments, reason = "resolved offsets/fn addresses threaded through from the caller; a builder type would just move the same 7 values around")]
+    /// `CharacterDataStack` and `GameXorSlot` fields, and
+    /// `push_fn`/`update_fn`/`dtor_fn` are the addresses of the game's
+    /// `CharacterDataStack::push`/`::update` and its MSVC string destructor.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "resolved offsets/fn addresses threaded through from the caller; a builder type would just move the same 8 values around"
+    )]
     pub unsafe fn change_skin(
         &self,
         cds_offset: usize,
         xor_offset: usize,
         push_fn: usize,
+        update_fn: usize,
         dtor_fn: usize,
         model: &CStr,
         skin: i32,
@@ -190,15 +204,24 @@ impl AIBaseCommon {
         // SAFETY: per fn contract.
         let xor_slot_ref = unsafe { &mut *xor_slot };
         // SAFETY: per fn contract.
-        unsafe { xor_slot_ref.encrypt(skin); }
-        stack.base_skin.skin = skin;
+        unsafe {
+            xor_slot_ref.encrypt(skin);
+        }
+        // Volatile: the game mutates this field concurrently, so a plain `&mut`
+        // write can be optimized away by LLVM (which assumes exclusive access).
+        // SAFETY: `&raw mut` of a live game-memory field; write is in-bounds.
+        unsafe {
+            (&raw mut stack.base_skin.skin).write_volatile(skin);
+        }
         // SAFETY: per fn contract.
-        let handled = unsafe { self.check_special_skins(cds_offset, push_fn, dtor_fn, model, skin, special_skins) };
+        let handled = unsafe {
+            self.check_special_skins(cds_offset, push_fn, dtor_fn, model, skin, special_skins)
+        };
         if !handled {
             // SAFETY: per fn contract.
-            unsafe { stack.clear_stack_properly(dtor_fn); }
-            // SAFETY: per fn contract.
-            unsafe { stack.push(push_fn, model, skin); }
+            unsafe {
+                stack.update(update_fn, true);
+            }
         }
     }
 }

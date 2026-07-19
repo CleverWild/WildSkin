@@ -77,7 +77,7 @@ pub unsafe fn apply_frame() {
                         && let Ok(c_model) = CString::new(entry.model_name.clone()) {
                             // SAFETY: per fn contract.
                             unsafe {
-                                p_ref.change_skin(off.fields.character_data_stack, off.fields.skin_id, off.fns.character_data_stack_push, off.fns.msvc_string_dtor, &c_model, entry.skin_id, &state.database.special_skins);
+                                p_ref.change_skin(off.fields.character_data_stack, off.fields.skin_id, off.fns.character_data_stack_push, off.fns.character_data_stack_update, off.fns.msvc_string_dtor, &c_model, entry.skin_id, &state.database.special_skins);
                             }
                         }
             }
@@ -115,7 +115,7 @@ pub unsafe fn apply_frame() {
                             && let Ok(c_model) = CString::new(entry.model_name.clone()) {
                                 // SAFETY: per fn contract.
                                 unsafe {
-                                    hero_ref.change_skin(off.fields.character_data_stack, off.fields.skin_id, off.fns.character_data_stack_push, off.fns.msvc_string_dtor, &c_model, entry.skin_id, &state.database.special_skins);
+                                    hero_ref.change_skin(off.fields.character_data_stack, off.fields.skin_id, off.fns.character_data_stack_push, off.fns.character_data_stack_update, off.fns.msvc_string_dtor, &c_model, entry.skin_id, &state.database.special_skins);
                                 }
                             }
         }
