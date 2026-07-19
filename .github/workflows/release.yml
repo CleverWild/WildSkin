@@ -48,15 +48,11 @@ jobs:
           path: WildSkin-injector
           token: ${{ secrets.INJECTOR_TOKEN }}
 
-      # The committed Cargo.toml omits the injector from `members`; add it back
-      # so `workspace = true` inheritance resolves and it builds.
-      - name: Add injector to workspace
-        run: (Get-Content Cargo.toml -Raw) -replace '"WildSkin-rs",', '"WildSkin-rs", "WildSkin-injector",' | Set-Content Cargo.toml -NoNewline
-
       # Caches ~/.cargo + the compiled target dir (the ~200 dependency crates),
       # which the manual registry-only cache never did — that's the bulk of the
-      # ~30-min Build below. Placed after the injector is in the workspace so
-      # its deps are part of the cached set.
+      # ~30-min Build below. Covers the root workspace's target/ only — the
+      # injector builds via its own separate manifest/lockfile, so its target/
+      # is outside this cache's scope.
       #
       # `key` busts the whole target cache when the ollvm toolchain version
       # changes (RELEASE_TAG in cmd_setup_ollvm.rs): the --obfuscate build
