@@ -24,12 +24,11 @@ const OBFUSCATION_LLVM_ARGS: &[&str] = &[
     "--irobf-cse",
 ];
 
-/// Builds the workspace and prints the DLL/exe paths.
+/// Builds the DLL and prints the DLL/exe paths.
 ///
-/// `wildskin-injector` is only a workspace member on machines that have it
-/// checked out and added to the local (git-ignored-by-`skip-worktree`)
-/// `Cargo.toml`; a plain clone of this public repo doesn't have the
-/// directory at all, so it's built conditionally, not via `--workspace`.
+/// `wildskin-injector` is a private, git-ignored *separate* workspace (its own
+/// `Cargo.toml`/`Cargo.lock`, absent from a plain clone of this public repo),
+/// so it's built by manifest path when present — not via the root `--workspace`.
 #[derive(Args)]
 pub struct BuildArgs {
     /// Build in release mode (optimized, `panic = "abort"`, LTO) instead of the faster debug profile.
@@ -55,20 +54,81 @@ pub struct BuildArgs {
 pub fn run(args: &BuildArgs) -> Result<(), Box<dyn std::error::Error>> {
     let has_injector = std::path::Path::new("WildSkin-injector").is_dir();
 
-    let mut cargo_args = vec![];
     if args.obfuscate {
         crate::cmd_setup_ollvm::run()?;
+    }
+
+    // DLL: root workspace. Injector: its own private, git-ignored workspace,
+    // built by manifest path (not as a member); `find_artifact` reads the
+    // absolute paths out of cargo's JSON, so the target location doesn't matter.
+    let dll_json = run_cargo_build(args, &["-p", "wildskin", "--lib"])?;
+    let dll_path = find_artifact(dll_json.as_bytes(), "cdylib", "WildSkin")
+        .ok_or("could not find WildSkin.dll in cargo's build output")?;
+    println!("Built:  {}", dll_path.display());
+
+    let exe_path = if has_injector {
+        let exe_json =
+            run_cargo_build(args, &["--manifest-path", "WildSkin-injector/Cargo.toml"])?;
+        let exe_path = find_artifact(exe_json.as_bytes(), "bin", "WildSkin_Injector")
+            .ok_or("could not find WildSkin_Injector.exe in cargo's build output")?;
+        println!("Built:  {}", exe_path.display());
+        Some(exe_path)
+    } else {
+        println!("Skipped: WildSkin-injector (private component not checked out here)");
+        None
+    };
+
+    let output_dir = if args.temp {
+        std::env::temp_dir().join("wildskin-build")
+    } else {
+        dll_path.parent().unwrap().to_path_buf()
+    };
+
+    if args.temp {
+        std::fs::create_dir_all(&output_dir)?;
+        std::fs::copy(&dll_path, output_dir.join(dll_path.file_name().unwrap()))?;
+        if let Some(exe_path) = &exe_path {
+            std::fs::copy(exe_path, output_dir.join(exe_path.file_name().unwrap()))?;
+        }
+        println!("Copied to: {}", output_dir.display());
+    }
+
+    if args.temp && args.open {
+        // Browse-then-discard: delete the temp dir once the user closes its window.
+        if let Err(e) = spawn_temp_cleanup_watcher(&output_dir) {
+            eprintln!("warning: could not start cleanup watcher: {e}");
+        } else {
+            println!(
+                "Opened {}; it will be deleted when you close the Explorer window.",
+                output_dir.display()
+            );
+        }
+    } else if args.open {
+        // Fire-and-forget: explorer.exe often exits nonzero even on success.
+        let _ = Command::new("explorer").arg(&output_dir).spawn();
+    }
+
+    Ok(())
+}
+
+/// Runs one `cargo build` (root DLL or the injector's separate workspace) with
+/// the profile/obfuscation flags from `args`, returning its
+/// `--message-format=json` output joined by newlines.
+fn run_cargo_build(
+    args: &BuildArgs,
+    target_args: &[&str],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut cargo_args: Vec<&str> = vec![];
+    if args.obfuscate {
         cargo_args.push("+ollvm");
     }
-    cargo_args.extend(["build", "-p", "wildskin", "--lib"]);
-    if has_injector {
-        cargo_args.extend(["-p", "wildskin-injector", "--bin", "WildSkin_Injector"]);
-    }
+    cargo_args.push("build");
+    cargo_args.extend_from_slice(target_args);
     if args.release || args.obfuscate {
         cargo_args.push("--release");
     }
 
-    println!("=== cargo {} (workspace) ===", cargo_args.join(" "));
+    println!("=== cargo {} ===", cargo_args.join(" "));
     let mut command = Command::new("cargo");
     command.args(&cargo_args);
     // `cargo xtask` is `cargo run -p xtask`, which sets `CARGO_MANIFEST_DIR`
@@ -112,53 +172,7 @@ pub fn run(args: &BuildArgs) -> Result<(), Box<dyn std::error::Error>> {
         command.env("RUSTFLAGS", rustflags);
     }
 
-    let json_output = command.run_rendering_cargo_json()?.join("\n");
-
-    let dll_path = find_artifact(json_output.as_bytes(), "cdylib", "WildSkin")
-        .ok_or("could not find WildSkin.dll in cargo's build output")?;
-    println!("Built:  {}", dll_path.display());
-
-    let exe_path = if has_injector {
-        let exe_path = find_artifact(json_output.as_bytes(), "bin", "WildSkin_Injector")
-            .ok_or("could not find WildSkin_Injector.exe in cargo's build output")?;
-        println!("Built:  {}", exe_path.display());
-        Some(exe_path)
-    } else {
-        println!("Skipped: WildSkin-injector (private component not checked out here)");
-        None
-    };
-
-    let output_dir = if args.temp {
-        std::env::temp_dir().join("wildskin-build")
-    } else {
-        dll_path.parent().unwrap().to_path_buf()
-    };
-
-    if args.temp {
-        std::fs::create_dir_all(&output_dir)?;
-        std::fs::copy(&dll_path, output_dir.join(dll_path.file_name().unwrap()))?;
-        if let Some(exe_path) = &exe_path {
-            std::fs::copy(exe_path, output_dir.join(exe_path.file_name().unwrap()))?;
-        }
-        println!("Copied to: {}", output_dir.display());
-    }
-
-    if args.temp && args.open {
-        // Browse-then-discard: delete the temp dir once the user closes its window.
-        if let Err(e) = spawn_temp_cleanup_watcher(&output_dir) {
-            eprintln!("warning: could not start cleanup watcher: {e}");
-        } else {
-            println!(
-                "Opened {}; it will be deleted when you close the Explorer window.",
-                output_dir.display()
-            );
-        }
-    } else if args.open {
-        // Fire-and-forget: explorer.exe often exits nonzero even on success.
-        let _ = Command::new("explorer").arg(&output_dir).spawn();
-    }
-
-    Ok(())
+    Ok(command.run_rendering_cargo_json()?.join("\n"))
 }
 
 /// The `--temp --open` watcher script. Opens `-Dir` in Explorer, waits for that
