@@ -6,6 +6,7 @@ members = ["WildSkin-rs", "shared", "xtask", "abi-verify", "abi-verify-macro"]
 serde_json = "1"
 dirs = "6"
 shared = { path = "shared" }
+ureq = { version = "3.3.0", features = ["json"] }
 
 [profile.release]
 opt-level = 3
@@ -19,7 +20,6 @@ overflow-checks = false
 missing_unsafe_on_extern = "deny"
 unsafe_attr_outside_unsafe = "deny"
 unsafe_op_in_unsafe_fn = "deny"
-unstable_features = "deny"
 
 deprecated_safe_2024 = "warn"
 ffi_unwind_calls = "warn"
@@ -91,8 +91,6 @@ if_then_some_else_none = "warn"
 # be the same panic with more code, not a safety improvement.
 indexing_slicing = "allow"
 infinite_loop = "warn"
-inline_asm_x86_att_syntax = "warn"
-inline_asm_x86_intel_syntax = "warn"
 large_include_file = "warn"
 lossy_float_literal = "warn"
 map_with_unused_argument_over_ranges = "warn"
