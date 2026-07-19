@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Tag to publish as (e.g. v16.14)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -17,6 +22,17 @@ jobs:
   build:
     needs: ci
     runs-on: windows-latest
+    # TAG_NAME: the tag this run publishes under, whichever trigger fired —
+    # the tag itself for a `push` (already exists as a ref), or the manual
+    # input for a `workflow_dispatch` (created fresh by `gh release create`
+    # below, since that command creates its underlying tag if absent).
+    # Condition on `startsWith(ref, 'refs/tags/')`, not `event_name`: its
+    # true-branch (github.ref_name) is guaranteed non-empty there, so this
+    # side-steps the `A && B || C` idiom's usual trap where a falsy/empty `B`
+    # (a workflow_dispatch run with the tag_name input left blank) would
+    # wrongly fall through to `C`.
+    env:
+      TAG_NAME: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || github.event.inputs.tag_name }}
     steps:
       # fetch-depth: 0 — need full history + all tags for the changelog step
       # to diff against the previous release tag.
@@ -28,13 +44,13 @@ jobs:
       # very end, after the ~30-min obfuscated build. Check up front so a
       # re-run against an existing release dies in seconds, not half an hour.
       - name: Ensure the release does not already exist
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "${{ github.ref_name }}" *> $null
+          gh release view "${{ env.TAG_NAME }}" *> $null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "::error::A release for ${{ github.ref_name }} already exists — delete it or bump the tag."
+            Write-Host "::error::A release for ${{ env.TAG_NAME }} already exists — delete it or bump the tag."
             exit 1
           }
           exit 0
@@ -112,30 +128,39 @@ jobs:
             target/x86_64-pc-windows-msvc/release/WildSkin.dll
             target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
 
+      # `--target` pins the tag to this exact commit — required for a
+      # manual-dispatch run, where the tag doesn't exist as a ref yet and
+      # `gh release create` creates it fresh (a real tag push already has
+      # its tag pointed at the pushed commit, so this is a no-op there).
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: >
-          gh release create "${{ github.ref_name }}"
+          gh release create "${{ env.TAG_NAME }}"
           target/x86_64-pc-windows-msvc/release/WildSkin.dll
           target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
+          --target ${{ github.sha }}
           --generate-notes
 
       # `--generate-notes` above pulls from merged PRs, which this repo
       # doesn't use (direct pushes to main) — so it never has real content
       # beyond the "Full Changelog" link. Build an actual commit list instead.
       - name: Generate changelog
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $prevTag = git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>$null
-          $range = if ($prevTag) { "$prevTag..${{ github.ref_name }}" } else { "${{ github.ref_name }}" }
+          # Walks back from the built commit itself (github.sha), not the tag
+          # ref — a manual-dispatch run's tag was only just created above and
+          # this checkout never fetched it back, so a lookup by tag name would
+          # find nothing.
+          $prevTag = git describe --tags --abbrev=0 "${{ github.sha }}^" 2>$null
+          $range = if ($prevTag) { "$prevTag..${{ github.sha }}" } else { "${{ github.sha }}" }
           $commits = git log $range --no-merges --pretty=format:"- %s (%h)"
-          $body = gh release view "${{ github.ref_name }}" --json body -q .body
+          $body = gh release view "${{ env.TAG_NAME }}" --json body -q .body
           @($body, "", "## Changes") + $commits | Set-Content -Path changelog-notes.md
-          gh release edit "${{ github.ref_name }}" --notes-file changelog-notes.md
+          gh release edit "${{ env.TAG_NAME }}" --notes-file changelog-notes.md
 
       # Scan the published artifacts on VirusTotal. `update_release_body`
       # (the action's own feature for this) only fires for a `release`
@@ -143,7 +168,7 @@ jobs:
       # links are appended manually in the next step instead.
       - name: Scan on VirusTotal
         id: virustotal
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
         uses: crazy-max/ghaction-virustotal@v5
         with:
           vt_api_key: ${{ secrets.VT_API_KEY }}
@@ -152,7 +177,7 @@ jobs:
             target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
 
       - name: Append VirusTotal links to release notes
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -162,6 +187,6 @@ jobs:
             $file, $url = $_ -split '=', 2
             "- [$file]($url)"
           }
-          $body = gh release view "${{ github.ref_name }}" --json body -q .body
+          $body = gh release view "${{ env.TAG_NAME }}" --json body -q .body
           @($body, "", "## VirusTotal") + $links | Set-Content -Path vt-notes.md
-          gh release edit "${{ github.ref_name }}" --notes-file vt-notes.md
+          gh release edit "${{ env.TAG_NAME }}" --notes-file vt-notes.md
