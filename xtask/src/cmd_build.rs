@@ -71,6 +71,38 @@ pub fn run(args: &BuildArgs) -> Result<(), Box<dyn std::error::Error>> {
     println!("=== cargo {} (workspace) ===", cargo_args.join(" "));
     let mut command = Command::new("cargo");
     command.args(&cargo_args);
+    // `cargo xtask` is `cargo run -p xtask`, which sets `CARGO_MANIFEST_DIR`
+    // and the `CARGO_PKG_*`/`CARGO_BIN_NAME`/`CARGO_CRATE_NAME` family to
+    // describe *xtask's own* package for this process. Left in place, this
+    // nested `cargo build` inherits them, and a stray `CARGO_MANIFEST_DIR`
+    // (xtask's dir instead of absent) flips `ring`'s build-script fingerprint
+    // on every single invocation, forcing it — and everything depending on
+    // it (`rustls`, `ureq`, ...) — to recompile from scratch every time.
+    // (Deliberately narrow: unlike a blanket `CARGO_`-prefix strip, this
+    // leaves `CARGO_HOME`/`CARGO_TARGET_DIR`/etc. untouched.)
+    for key in [
+        "CARGO_MANIFEST_DIR",
+        "CARGO_MANIFEST_PATH",
+        "CARGO_PKG_NAME",
+        "CARGO_PKG_VERSION",
+        "CARGO_PKG_VERSION_MAJOR",
+        "CARGO_PKG_VERSION_MINOR",
+        "CARGO_PKG_VERSION_PATCH",
+        "CARGO_PKG_VERSION_PRE",
+        "CARGO_PKG_AUTHORS",
+        "CARGO_PKG_DESCRIPTION",
+        "CARGO_PKG_HOMEPAGE",
+        "CARGO_PKG_REPOSITORY",
+        "CARGO_PKG_LICENSE",
+        "CARGO_PKG_LICENSE_FILE",
+        "CARGO_PKG_RUST_VERSION",
+        "CARGO_PKG_README",
+        "CARGO_CRATE_NAME",
+        "CARGO_BIN_NAME",
+        "CARGO_PRIMARY_PACKAGE",
+    ] {
+        command.env_remove(key);
+    }
     if args.obfuscate {
         let rustflags = OBFUSCATION_LLVM_ARGS
             .iter()

@@ -13,6 +13,7 @@ public static class WsNative {
   public static IntPtr Open(string p){ return CreateFileW(p, 0x80000000, 0x7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero); }
   public static string Final(IntPtr h){ var sb=new StringBuilder(1024); int n=GetFinalPathNameByHandleW(h,sb,sb.Capacity,0); if(n<=0) return ""; var s=sb.ToString(); if(s.StartsWith(@"\\?\")) s=s.Substring(4); return s; }
   public static void Close(IntPtr h){ CloseHandle(h); }
+  public static bool IsFree(string p){ var h=CreateFileW(p, 0x80000000, 0, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero); if(h.ToInt64()==-1) return false; CloseHandle(h); return true; }
 }
 '@
 $h = [WsNative]::Open($Dir)
@@ -37,4 +38,9 @@ while ($true) {
 }
 $final = [WsNative]::Final($h)
 [WsNative]::Close($h)
-if ($final -and (Test-Path -LiteralPath $final)) { Remove-Item -LiteralPath $final -Recurse -Force }
+while ($final -and (Test-Path -LiteralPath $final)) {
+    $locked = Get-ChildItem -LiteralPath $final -Recurse -File | Where-Object { -not [WsNative]::IsFree($_.FullName) }
+    if ($locked) { Start-Sleep -Milliseconds 500; continue }
+    try { Remove-Item -LiteralPath $final -Recurse -Force -ErrorAction Stop; break }
+    catch { Start-Sleep -Milliseconds 500 }
+}
