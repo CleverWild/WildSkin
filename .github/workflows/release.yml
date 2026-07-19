@@ -126,7 +126,7 @@ jobs:
           name: WildSkin
           path: |
             target/x86_64-pc-windows-msvc/release/WildSkin.dll
-            target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
+            WildSkin-injector/target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
 
       # `--target` pins the tag to this exact commit — required for a
       # manual-dispatch run, where the tag doesn't exist as a ref yet and
@@ -139,7 +139,7 @@ jobs:
         run: >
           gh release create "${{ env.TAG_NAME }}"
           target/x86_64-pc-windows-msvc/release/WildSkin.dll
-          target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
+          WildSkin-injector/target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
           --target ${{ github.sha }}
           --generate-notes
 
@@ -174,7 +174,7 @@ jobs:
           vt_api_key: ${{ secrets.VT_API_KEY }}
           files: |
             target/x86_64-pc-windows-msvc/release/WildSkin.dll
-            target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
+            WildSkin-injector/target/x86_64-pc-windows-msvc/release/WildSkin_Injector.exe
 
       - name: Append VirusTotal links to release notes
         if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
