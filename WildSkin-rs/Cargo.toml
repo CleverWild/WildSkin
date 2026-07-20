@@ -9,7 +9,7 @@ crate-type = ["cdylib"]
 name = "WildSkin"
 
 [dependencies]
-hudhook = "0.9"
+hudhook = { path = "../vendor/hudhook-0.9.1" }
 shared = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = { workspace = true }
