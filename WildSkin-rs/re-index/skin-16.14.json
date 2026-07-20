@@ -1,0 +1,265 @@
+{
+  "schema_version": 1,
+  "binary": {
+    "product": "League of Legends",
+    "captured_version": "16.14.794.5912",
+    "image_base": "0x140000000",
+    "bndb": "League of Legends-16.14.exe.bndb"
+  },
+  "_notes": {
+    "purpose": "RE metadata source-of-truth, anchored to constants/AOBs (Path C) not addresses, so it survives ~biweekly LoL recompiles. resolved_address fields are cache/telemetry only, NEVER a key.",
+    "provenance_rule": "resolved_address, signature.byte_sig, signature.cfg, vars.db_state, anchors.constants, anchors.runtime_signature = DB-measured. metadata.name/prototype/comment, vars.proposed, role/identity labels = inference.",
+    "anchor_finding": "string/reflection-name anchors reach the skin RENDERER side; the CharacterStackData mutation path (0x40e8/0x1314, Update fn) is only reachable by feeding signatures.rs AOBs into search_bytes.",
+    "shared_source_of_truth": "signature.byte_sig / anchors.runtime_signature use the same masked-AOB form as WildSkin-rs/src/memory/signatures.rs — the byte pattern is simultaneously the runtime scanner's locator and the BN re-anchor key."
+  },
+  "functions": [
+    {
+      "id": "skin.reflection.register_GetUnitSkinID",
+      "metadata": {
+        "name": "register_GetUnitSkinID",
+        "prototype": "void register_GetUnitSkinID(void)",
+        "comment": "Static-init registrar: builds name 'GetUnitSkinID' (qword 0x5374696e55746547 = 'GetUnitS' + strncpy 'kinID') and registers accessor fn-ptr sub_1401f65f0 into script-binding registry data_141ed6d50. PROPOSED name; DB has it stripped as sub_1400b3fd0.",
+        "confidence": "high",
+        "provenance": "metadata=inference; everything below=DB-measured"
+      },
+      "signature": {
+        "byte_sig": "48 ? ? ? ? 57 48 81 EC ? ? ? ? 0F 29 B4 24 ? ? ? ? 48 8B 05 ? ? ? ? 48 33 C4 48 ? ? ? ? 8B 05 ? ? ? ? 33 FF F2 0F 10 35 ? ? ? ? 89 ? ? ? 0F B6 05 ? ? ? ? 88",
+        "cfg": { "blocks": 6, "edges": 7, "loops": 0, "calls": 5 },
+        "size_bucket": "0x100-0x200"
+      },
+      "anchors": {
+        "string_xrefs": ["GetUnitSkinID"],
+        "string_construction": "qword 0x5374696e55746547 ('GetUnitS') + __builtin_strncpy 'kinID'",
+        "import_calls": ["__security_check_cookie", "_invoke_watson"],
+        "named_calls": [],
+        "constants": [],
+        "named_neighbors": {
+          "callees": ["sub_1401f65f0 (=real GetUnitSkinID accessor, registered fn-ptr)", "sub_1401ff330 (registry insert)"],
+          "data_refs": ["data_141ed6d50 (script-binding registry)", "data_141ed29c6 (result flag byte)"]
+        }
+      },
+      "vars": {
+        "db_state": {
+          "params": [],
+          "note": "No parameter-category vars in DB; effectively void(void). Locals are BN auto-names (var_98,var_68,var_60,var_5c...,result,rax_1,rcx_1)."
+        },
+        "proposed": {
+          "args": [],
+          "locals": [
+            { "db_name": "var_60", "proposed": "name_tail", "type": "int32_t", "note": "holds 'kinID' strncpy tail" },
+            { "db_name": "result", "proposed": "freed_tmp_str", "type": "int64_t*" }
+          ]
+        }
+      },
+      "last_resolved": {
+        "version": "16.14.794.5912",
+        "resolved_address": "0x1400b3fd0",
+        "method": "anchor_unique_string",
+        "score": 1.0
+      }
+    },
+    {
+      "id": "skin.teamcolor.apply_all_submeshes",
+      "metadata": {
+        "name": "ApplyRelativeTeamColors_AllSubmeshes",
+        "prototype": "bool ApplyRelativeTeamColors_AllSubmeshes(void* this)",
+        "comment": "Per-object team-color apply: iterates model/skin vector at this+0x1370..+0x1378, loads relative team color per entry via sub_1403f4900, logs fmt string on failure, then FAddClassDep + 'Idle1' anim bind. PROPOSED name; DB has it stripped as sub_140e3c940. Sibling single-target variant is sub_14029b400 (shares fmt string).",
+        "confidence": "medium",
+        "provenance": "metadata=inference; everything below=DB-measured"
+      },
+      "signature": {
+        "byte_sig": "40 53 57 48 ? ? ? 48 8B F9 48 ? ? ? ? 48 8B 89 ? ? ? ? 33 F6 48 8B 87 ? ? ? ? 48 2B C1 48 ? ? ? 48 85 C0 0F ? ? ? ? ? 4C ? ? ? ? 8B D6 4C 8D 35 ? ? ? ? 48",
+        "cfg": { "blocks": 24, "edges": 35, "loops": 2, "calls": 10, "loops_note": "back-edge count; primary do-while over model vector + 1 inner refcount loop" },
+        "size_bucket": "0x200-0x400"
+      },
+      "anchors": {
+        "string_xrefs": ["Failed to load relative team color for skin: %s and skinID: %i", "Idle1"],
+        "string_xref_ambiguous": "fmt string alone -> {sub_140e3c940, sub_14029b400}; disambiguated below",
+        "import_calls": ["_fprintf_p_l"],
+        "named_calls": ["MRE::FAddClassDep"],
+        "disambiguator": "MRE::FAddClassDep + 'Idle1' present here, absent in sibling sub_14029b400",
+        "constants": ["0x1370", "0x1378", "0x1348", "0x1388", "0x1338", "0x1390"],
+        "constants_note": "project 0x40e8/0x1314 NOT present in this function",
+        "named_neighbors": {
+          "callees": ["MRE::FAddClassDep", "sub_1403f4900 (team-color builder, shared w/ sibling)", "sub_140743310", "sub_1407472f0"]
+        }
+      },
+      "vars": {
+        "db_state": {
+          "params": [ { "db_name": "arg1", "type": "void*", "storage": "rcx" } ],
+          "note": "1 parameter-category var in DB. Remaining are BN auto reg-temporaries (rax_1..rax_16, rcx_1..rcx_12, i, i_1, arg_8...)."
+        },
+        "proposed": {
+          "args": [
+            { "index": 0, "db_name": "arg1", "proposed": "this", "type": "CharacterObject*", "storage": "rcx", "note": "model/skin vector at +0x1370/+0x1378" }
+          ],
+          "locals": [
+            { "db_name": "i / i_1", "proposed": "entry_idx", "type": "uint64_t" },
+            { "db_name": "rbx_1", "proposed": "entry_ptr", "type": "int64_t*", "note": "current vector element; skinID at [5]" },
+            { "db_name": "arg_8", "proposed": "team_color_obj", "type": "void(*)()" }
+          ]
+        }
+      },
+      "last_resolved": {
+        "version": "16.14.794.5912",
+        "resolved_address": "0x140e3c940",
+        "method": "anchor_multi_signal",
+        "score": 0.9,
+        "score_note": "primary fmt-string anchor ambiguous (2 candidates); named-call MRE::FAddClassDep + 'Idle1' string reduce to 1"
+      }
+    },
+    {
+      "id": "skin.mutate.character_data_stack_update",
+      "metadata": {
+        "name": "CharacterDataStack::Update",
+        "prototype": "int64_t CharacterDataStack__Update(CharacterDataStack* this, bool change)",
+        "comment": "THE skin-apply mutation fn. Runtime calls update(true) to apply base_skin.skin. Matches signatures.rs UPDATE_FN_SIG (entry prologue) AND character_data.rs UpdateFn exactly; DB arg count (2: this, change) confirms the ABI. PROPOSED name; DB stripped as sub_140210460.",
+        "confidence": "confirmed",
+        "provenance": "metadata=inference; resolved_address/byte_sig/cfg/vars.db_state/runtime_signature=DB-measured"
+      },
+      "signature": {
+        "byte_sig": "88 ? ? ? 55 53 56 57 41 54 41 55 41 56 41 57 48 ? ? ? ? 48 81 EC ? ? ? ? 48 ? ? 48 ? ? ? 48 ? ? ? 45 33 E4 4C ? ? ? 41 8B DC 4C ? ? ? 4C 8B E9 4C ? ? ? 4C",
+        "cfg": { "blocks": 158, "edges": "not_reliably_countable", "note": "large/complex fn; block count from full basic-blocks dump. Update is the heavy per-apply routine." },
+        "size_bucket": "large"
+      },
+      "anchors": {
+        "runtime_signature": {
+          "symbol": "UPDATE_FN_SIG",
+          "file": "WildSkin-rs/src/memory/signatures.rs",
+          "role": "call_target",
+          "pattern_short": "88 54 24 10 55 53 56 57 41 54 41 55 41 56 41",
+          "full_signature": "88 54 24 10 55 53 56 57 41 54 41 55 41 56 41 57 48 8D 6C 24 E1 48 81 EC 88 00 00 00",
+          "abi_type": "WildSkin-rs/src/sdk/character_data.rs :: UpdateFn",
+          "match": "unique; match address == function entry"
+        },
+        "string_xrefs": [],
+        "constants": [],
+        "named_neighbors": {}
+      },
+      "vars": {
+        "db_state": {
+          "params": [
+            { "db_name": "arg1", "type": "int64_t*", "storage": "rcx" },
+            { "db_name": "arg2", "type": "char", "storage": "rdx" }
+          ],
+          "note": "2 params — matches UpdateFn(this, change:bool). Locals are BN auto temporaries."
+        },
+        "proposed": {
+          "args": [
+            { "index": 0, "db_name": "arg1", "proposed": "this", "type": "CharacterDataStack*", "storage": "rcx" },
+            { "index": 1, "db_name": "arg2", "proposed": "change", "type": "bool", "storage": "rdx" }
+          ]
+        }
+      },
+      "last_resolved": {
+        "version": "16.14.794.5912",
+        "resolved_address": "0x140210460",
+        "method": "runtime_signature_entry_prologue",
+        "score": 1.0
+      }
+    },
+    {
+      "id": "skin.offset_donor.character_data_stack_field",
+      "metadata": {
+        "name": "CharacterObject_set_model_and_skin",
+        "prototype": "int32_t sub_1402a3a20(CharacterObject* this, /*18 params*/ ...)",
+        "comment": "change_skin-adjacent: references the CharacterDataStack at this+0x40e8 (&arg1[0x81d]) and forwards 17 fields to the emplace/build helper sub_14022aee0. Hosts the 'lea rcx,[rbp+0x40e8]' the runtime scrapes for FieldOffsets.character_data_stack. PROPOSED name/role (not asserted to be change_skin); DB stripped as sub_1402a3a20.",
+        "confidence": "medium",
+        "provenance": "metadata=inference; resolved_address/byte_sig/vars.db_state/constants/runtime_signature=DB-measured"
+      },
+      "signature": {
+        "byte_sig": "48 ? ? ? ? 89 ? ? ? 55 56 57 41 54 41 55 41 56 41 57 48 81 EC ? ? ? ? 48 8B E9 48 8D 94 24 ? ? ? ? 48 81 C1 ? ? ? ? 45 8B F9 4D 8B E8 E8 ? ? ? ? 4C 8B D0 33 C0 8B D8 44",
+        "cfg": { "blocks": "not_enumerated", "note": "not fetched to avoid a second large dump; HLIL shows 1 primary refcount loop + a submesh iteration loop." },
+        "size_bucket": "medium"
+      },
+      "anchors": {
+        "runtime_signature": {
+          "symbol": "CHARACTER_DATA_STACK_OFFSET_SIG",
+          "file": "WildSkin-rs/src/memory/signatures.rs",
+          "role": "offset_scrape",
+          "pattern": "48 8D 8D ? ? 00 00 44 8B 8C 24 ? ? 00 00",
+          "scrape_site": "0x1402a3b09",
+          "scraped_offset": "0x40e8",
+          "match": "unique (1 hit for the dewildcarded 48 8D 8D E8 40 00 00 44 8B 8C 24)"
+        },
+        "constants": ["0x40e8"],
+        "named_neighbors": { "callees": ["sub_14022aee0 (CharacterDataStack emplace/build, 17 forwarded fields)"] }
+      },
+      "vars": {
+        "db_state": {
+          "params": [
+            { "db_name": "arg1", "type": "int64_t*", "storage": "rcx" },
+            { "db_name": "arg2..arg18", "type": "mixed (int32/char/char*)", "note": "18 params total; arg2..arg18 forwarded to sub_14022aee0" }
+          ],
+          "note": "18 params. Names BN auto; types BN-inferred."
+        },
+        "proposed": {
+          "args": [ { "index": 0, "db_name": "arg1", "proposed": "this", "type": "CharacterObject*", "storage": "rcx", "note": "CharacterDataStack at this+0x40e8" } ]
+        }
+      },
+      "last_resolved": {
+        "version": "16.14.794.5912",
+        "resolved_address": "0x1402a3a20",
+        "method": "runtime_signature_offset_scrape",
+        "score": 1.0
+      }
+    },
+    {
+      "id": "skin.offset_donor.skin_id_field",
+      "metadata": {
+        "name": "CharacterStackData_field_init",
+        "prototype": "uint64_t sub_14026c540(int32_t* out, char* modelA, int32_t* p3, char* modelB, int32_t skin, char gear, void* p7, int32_t p8, int64_t p9)",
+        "comment": "CharacterStackData field-initializer/setter. Hosts 'mov [rsi+0x1314],al' — the skin_id byte write the runtime scrapes for FieldOffsets.skin_id. PROPOSED name/role; DB stripped as sub_14026c540.",
+        "confidence": "medium",
+        "provenance": "metadata=inference; resolved_address/byte_sig/cfg/vars.db_state/constants/runtime_signature=DB-measured"
+      },
+      "signature": {
+        "byte_sig": "40 55 53 56 57 41 54 41 55 41 56 41 57 48 ? ? ? ? 48 81 EC ? ? ? ? 48 8B 05 ? ? ? ? 48 33 C4 48 ? ? ? 4C ? ? ? 49 8B F8 4C 8B AD ? ? ? ? 48 8B D9 4C ? ? ? 4C",
+        "cfg": { "blocks": 63, "edges": 96, "loops": 7, "note": "loops = inlined string-copy self-loops; edges/loops counted from full basic-blocks dump" },
+        "size_bucket": "0x400-0x800"
+      },
+      "anchors": {
+        "runtime_signature": {
+          "symbol": "SKIN_ID_OFFSET_SIG",
+          "file": "WildSkin-rs/src/memory/signatures.rs",
+          "role": "offset_scrape",
+          "pattern": "88 86 ? ? 00 00 48 89 45 ? 0F B6 45 A8 88 86 ? 13",
+          "scrape_site": "0x14026ca2a",
+          "scraped_offset": "0x1314",
+          "match": "unique via discriminator; raw '88 86 14 13 00 00' hits 2 fns (sub_14026c540, sub_140334000) but only sub_14026c540 carries '0F B6 45 A8' (sub_140334000 has '0F B6 45 C1')"
+        },
+        "constants": ["0x1314"],
+        "constants_note": "raw 0x1314 also present at sibling sub_140334000 (rejected by full-sig discriminator)",
+        "named_neighbors": {}
+      },
+      "vars": {
+        "db_state": {
+          "params": [
+            { "db_name": "arg1", "type": "int32_t*", "storage": "rcx" },
+            { "db_name": "arg2", "type": "char*", "storage": "rdx" },
+            { "db_name": "arg3", "type": "int32_t*", "storage": "r8" },
+            { "db_name": "arg4", "type": "char*", "storage": "r9" },
+            { "db_name": "arg5", "type": "int32_t", "storage": "stack+0x28" },
+            { "db_name": "arg6", "type": "char", "storage": "stack+0x30" },
+            { "db_name": "arg7", "type": "void*", "storage": "stack+0x38" },
+            { "db_name": "arg8", "type": "int32_t", "storage": "stack+0x40" },
+            { "db_name": "arg9", "type": "int64_t", "storage": "stack+0x48" }
+          ],
+          "note": "9 params. Names BN auto; types BN-inferred."
+        },
+        "proposed": {
+          "args": [
+            { "index": 4, "db_name": "arg5", "proposed": "skin_id", "type": "int32_t", "note": "written to [rsi+0x1314] as byte" },
+            { "index": 5, "db_name": "arg6", "proposed": "gear", "type": "char" }
+          ]
+        }
+      },
+      "last_resolved": {
+        "version": "16.14.794.5912",
+        "resolved_address": "0x14026c540",
+        "method": "runtime_signature_offset_scrape_discriminated",
+        "score": 0.95
+      }
+    }
+  ]
+}
