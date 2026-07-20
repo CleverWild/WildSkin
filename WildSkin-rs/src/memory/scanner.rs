@@ -8,22 +8,19 @@ pub struct Signature {
 
 fn find_first(haystack: &[u8], pattern: &str) -> Option<usize> {
     let builder = aobscan::PatternBuilder::from_ida_style(pattern).ok()?;
-    // aobscan 0.3.0's multi-threaded path panics (`attempt to subtract with
-    // overflow`) when a chunk ends up shorter than the pattern itself, which
-    // happens on small haystacks (e.g. unit-test buffers) split across many
-    // threads. Real `.text` sections are megabytes, so `with_all_threads()`
-    // is safe there; fall back to a single thread below that size.
-    // ponytail: crate bug workaround via a size threshold, not a general fix
-    let scanner = if haystack.len() >= 1 << 16 {
-        builder.with_all_threads()
-    } else {
-        builder.with_threads(1).ok()?
-    }
-    .build();
+    // Single-threaded, matching the reference's `find_signature` exactly.
+    // `with_all_threads()` spawns num_cpus::get() OS threads per call, which
+    // saturates every logical core on the host for the scan's duration —
+    // across the 14 sequential signatures resolved at injection time, that
+    // starved the live game process of CPU on every core and was the root
+    // cause of a multi-second freeze right after injection. A single-threaded
+    // linear scan over a multi-MB .text section still completes in well
+    // under a frame's worth of time.
+    let scanner = builder.with_threads(1).ok()?.build();
     let mut found = None;
     scanner.scan(haystack, |offset| {
         found = Some(offset);
-        true // stop at first match
+        false // false = stop; the reference returns the FIRST match, not the last
     });
     found
 }
@@ -162,6 +159,22 @@ mod tests {
         v.extend_from_slice(bytes);
         v.extend_from_slice(&[0x90; 16]); // trailing padding
         v
+    }
+
+    #[test]
+    fn returns_the_first_match_not_the_last_when_several_exist() {
+        // The reference `find_signature` returns the FIRST match; a callback
+        // that fails to stop early would leave `found` on the LAST one, which
+        // for a multi-match signature (e.g. GAME_CLIENT_SIG) resolves to the
+        // wrong slot and hangs `wait_for_game_client` forever.
+        let mut bytes = vec![0xAAu8, 0xBB, 0xCC];
+        bytes.extend_from_slice(&[0x90; 8]);
+        bytes.extend_from_slice(&[0xAA, 0xBB, 0xCC]); // a second, later match
+        let module = make_module(4, &bytes);
+        let base = module.as_ptr() as usize;
+        let sig = Signature { patterns: &["AA BB CC"], sub_base: true, read: false, relative: false, additional: 0 };
+        // First match sits at prefix offset 4 (== base+4-base after sub_base).
+        assert_eq!(unsafe { resolve(base, &module, &sig) }, Some(4));
     }
 
     #[test]
