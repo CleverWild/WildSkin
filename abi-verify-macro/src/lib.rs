@@ -14,7 +14,7 @@
 mod check;
 
 use abi_verify::{verification_disabled, DISABLED_ENV_VAR, EXE_PATH_ENV_VAR};
-use check::{check_abi, check_arg_widths, check_full_signature, summarize_param_names, AbiCheckArgs};
+use check::{run_checks, summarize_param_names, AbiCheckArgs};
 use proc_macro2::Span;
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -109,6 +109,17 @@ fn type_to_width(ty: &syn::Type) -> Option<u8> {
     }
 }
 
+/// Emits the annotated item alongside its `compile_error!`s. Dropping the item
+/// instead would bury the real message under a "cannot find type" error from
+/// every downstream user of the alias.
+fn emit_with_item(
+    item: proc_macro::TokenStream,
+    errors: impl Iterator<Item = proc_macro2::TokenStream>,
+) -> proc_macro::TokenStream {
+    let item = proc_macro2::TokenStream::from(item);
+    quote::quote! { #item #(#errors)* }.into()
+}
+
 #[proc_macro_attribute]
 pub fn verify_abi(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     // Switched off entirely (CI): a pure passthrough, emitting nothing at all.
@@ -118,13 +129,13 @@ pub fn verify_abi(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) 
 
     let args = match parse_args(attr.into()) {
         Ok(args) => args,
-        Err(error) => return error.to_compile_error().into(),
+        Err(error) => return emit_with_item(item, std::iter::once(error.to_compile_error())),
     };
 
     let Ok(item_type) = syn::parse::<syn::ItemType>(item.clone()) else {
-        return syn::Error::new(Span::call_site(), "#[verify_abi] can only be applied to a `type Alias = ...;` item")
-            .to_compile_error()
-            .into();
+        let error = syn::Error::new(Span::call_site(), "#[verify_abi] can only be applied to a `type Alias = ...;` item")
+            .to_compile_error();
+        return emit_with_item(item, std::iter::once(error));
     };
     let item_name = item_type.ident.to_string();
 
@@ -176,28 +187,24 @@ pub fn verify_abi(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) 
     let check_args = AbiCheckArgs {
         pattern: &args.pattern,
         call_target: args.call_target,
-        declared_args: bare_fn.and_then(|bare_fn| u8::try_from(bare_fn.inputs.len()).ok()),
+        // `None` skips the count check: a variadic `fn(a, ...)` declares no
+        // fixed total to compare the recovered one against.
+        declared_args: bare_fn
+            .filter(|bare_fn| bare_fn.variadic.is_none())
+            .and_then(|bare_fn| u8::try_from(bare_fn.inputs.len()).ok()),
         item_name: &item_name,
         full_signature: args.full_signature.as_deref(),
     };
 
     // Each check gets its own `compile_error!` so one failure can't mask another.
-    let error_messages: Vec<String> = [
-        check_abi(&check_args, exe_path),
-        // Unconditional: a `None` `full_signature` is a trivial `Ok(())` inside.
-        check_full_signature(&check_args, exe_path),
-        check_arg_widths(&check_args, exe_path, &declared_widths, &param_names),
-    ]
-    .into_iter()
-    .filter_map(Result::err)
-    .map(&enrich)
-    .collect();
+    let error_messages = run_checks(&check_args, exe_path, &declared_widths, &param_names);
 
     if error_messages.is_empty() {
         return item;
     }
 
-    let compile_errors =
-        error_messages.into_iter().map(|message| syn::Error::new(Span::call_site(), message).to_compile_error());
-    quote::quote! { #(#compile_errors)* }.into()
+    let compile_errors = error_messages
+        .into_iter()
+        .map(|message| syn::Error::new(Span::call_site(), enrich(message)).to_compile_error());
+    emit_with_item(item, compile_errors)
 }

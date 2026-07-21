@@ -75,7 +75,12 @@ pub struct CharacterDataStack {
 // arg-count check still guards the ABI. Re-add `full_signature` once the 16.14
 // prologue is snapshotted.
 #[abi_verify_macro::verify_abi(
-    pattern = "E8 ? ? ? ? 48 8D 8D ? ? 00 00 E8 ? ? ? ? 48 85 C0 74 ? 48 85 ED"
+    pattern = "E8 ? ? ? ? 48 8D 8D ? ? 00 00 E8 ? ? ? ? 48 85 C0 74 ? 48 85 ED",
+    // `CharacterDataStack::Push`'s real 16.14 prologue: register spills,
+    // non-volatile pushes, `lea rbp,[rsp-7]`, `sub rsp,0xD0`. Only stack-relative
+    // displacements here, no rel32, so no wildcards needed. Pins the frame size,
+    // which is what moved when the arg list changed to 18.
+    full_signature = "48 89 5C 24 10 48 89 74 24 18 48 89 7C 24 20 55 41 54 41 55 41 56 41 57 48 8D 6C 24 F9 48 81 EC D0 00 00 00 48 8B DA"
 )]
 // `this`/`model`/`skin`/`gear` are confirmed; every `unknown_*`/`flag_*` name is
 // a deliberately honest placeholder for a slot whose exact purpose wasn't pinned

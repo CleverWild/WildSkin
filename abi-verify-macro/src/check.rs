@@ -19,9 +19,9 @@ use abi_verify::{DISABLED_ENV_VAR, EXE_PATH_ENV_VAR};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-/// One-entry `.text` cache: all three checks read it for every annotated item,
-/// so an uncached run re-reads a ~27 MB section 15 times on this project. One
-/// entry is enough — every item in a compilation resolves the same path.
+/// One-entry `.text` cache: without it every annotated item re-reads the same
+/// ~27 MB section. One entry is enough — every item in a compilation resolves
+/// the same path.
 static TEXT_CACHE: Mutex<Option<(PathBuf, Arc<[u8]>)>> = Mutex::new(None);
 
 fn text_section(exe_path: &Path) -> Result<Arc<[u8]>, String> {
@@ -44,7 +44,6 @@ fn text_section(exe_path: &Path) -> Result<Arc<[u8]>, String> {
 
 /// Resolves the annotated item's locator pattern to a single function offset
 /// within `text`, turning [`ResolveError`] into a human-readable message.
-/// Shared by all three exe-dependent checks (each resolves independently).
 fn resolve_offset(args: &AbiCheckArgs<'_>, text: &[u8]) -> Result<usize, String> {
     let resolved = if args.call_target {
         abi_verify::resolve::resolve_call_target(text, args.pattern)
@@ -69,6 +68,60 @@ fn resolve_offset(args: &AbiCheckArgs<'_>, text: &[u8]) -> Result<usize, String>
     })
 }
 
+/// Resolves the exe path to its `.text` section. `Ok(None)` = no exe
+/// configured, so every check is skipped; `Err` = a path was given but isn't
+/// usable, which is loud (setting the var at all implies meaning it).
+fn resolve_text(exe_path: Option<&Path>) -> Result<Option<Arc<[u8]>>, String> {
+    let Some(exe_path) = exe_path else {
+        return Ok(None);
+    };
+    if std::fs::metadata(exe_path).is_err() {
+        return Err(format!(
+            "abi-verify: configured game executable path does not exist: {}\n  \
+             `{EXE_PATH_ENV_VAR}` points somewhere that isn't there. Fix it, unset it to fall back to \
+             auto-detecting a standard install, or set `{DISABLED_ENV_VAR}=true` to skip these checks entirely.",
+            exe_path.display()
+        ));
+    }
+    text_section(exe_path).map(Some)
+}
+
+/// Runs every exe-dependent check for one annotated item, returning one
+/// message per failure so a single failing check can't mask another.
+///
+/// The `.text` read, the pattern resolution and the disassembly happen once
+/// and feed all three comparisons, which are themselves pure functions over
+/// the resolved bytes (and unit-tested as such). A failure to get that far —
+/// no exe, unreadable exe, unresolvable pattern — is a single message, since
+/// none of the comparisons can run at all.
+pub fn run_checks(
+    args: &AbiCheckArgs<'_>,
+    exe_path: Option<&Path>,
+    declared_widths: &[Option<u8>],
+    param_names: &[Option<String>],
+) -> Vec<String> {
+    let text = match resolve_text(exe_path) {
+        Ok(Some(text)) => text,
+        Ok(None) => return Vec::new(),
+        Err(error) => return vec![error],
+    };
+    let offset = match resolve_offset(args, &text) {
+        Ok(offset) => offset,
+        Err(error) => return vec![error],
+    };
+
+    let body = &text[offset..];
+    let recovered = abi_verify::arg_count::recover_arg_count(body);
+    [
+        compare_arg_count(args, &recovered),
+        compare_full_signature(args, body),
+        compare_widths(declared_widths, &recovered, param_names, args.item_name),
+    ]
+    .into_iter()
+    .filter_map(Result::err)
+    .collect()
+}
+
 pub struct AbiCheckArgs<'a> {
     pub pattern: &'a str,
     pub call_target: bool,
@@ -83,36 +136,13 @@ pub struct AbiCheckArgs<'a> {
     pub full_signature: Option<&'a str>,
 }
 
-/// Checks a single FFI function pointer's declared parameter count against
-/// what analysis of the real game binary recovers.
-///
-/// `exe_path` is the already-resolved value of the game-exe env var:
-/// `None` means the env var was unset (check skipped, silently `Ok`),
-/// `Some(path)` means it was set to `path` (checked for real; a bad/missing
-/// path is a loud `Err`, since setting the var at all implies the caller
-/// meant to point at something real).
-pub fn check_abi(args: &AbiCheckArgs<'_>, exe_path: Option<&Path>) -> Result<(), String> {
-    let Some(exe_path) = exe_path else {
-        return Ok(());
-    };
-
-    if std::fs::metadata(exe_path).is_err() {
-        return Err(format!(
-            "abi-verify: configured game executable path does not exist: {}\n  \
-             `{EXE_PATH_ENV_VAR}` points somewhere that isn't there. Fix it, unset it to fall back to \
-             auto-detecting a standard install, or set `{DISABLED_ENV_VAR}=true` to skip these checks entirely.",
-            exe_path.display()
-        ));
-    }
-
-    let text = text_section(exe_path)?;
-
-    let offset = resolve_offset(args, &text)?;
-
+/// Compares a single FFI function pointer's declared parameter count against
+/// what disassembling the real game function recovered. Pure: no filesystem,
+/// no pattern resolution.
+fn compare_arg_count(args: &AbiCheckArgs<'_>, recovered: &RecoveredArgCount) -> Result<(), String> {
     let Some(declared) = args.declared_args else {
         return Ok(());
     };
-    let recovered = abi_verify::arg_count::recover_arg_count(&text[offset..]);
     let total = recovered.total();
     if total != declared {
         return Err(format!(
@@ -143,44 +173,19 @@ fn format_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02X}")).collect::<Vec<_>>().join(" ")
 }
 
-/// Checks a single FFI function pointer's actual bytes against a
-/// developer-recorded "full signature" byte template, independently of the
-/// parameter-count check in [`check_abi`].
-///
-/// Mirrors `check_abi`'s env-var/path/`.text`-reading/pattern-resolution
-/// conventions exactly (see this module's doc comment for why `exe_path` is
-/// passed in already-resolved rather than read from an env var internally);
-/// the file gets read and the locator pattern gets re-resolved
-/// independently of `check_abi`'s own resolution — that's fine, these two
-/// checks are kept independently simple rather than sharing/caching that
-/// work, matching the rest of this system.
+/// Compares the resolved function's actual bytes (`body`, starting at its
+/// first byte) against a developer-recorded "full signature" byte template —
+/// independent of the parameter-count check, and pure like it.
 ///
 /// `args.full_signature` being `None` means this check wasn't requested for
-/// this item at all: rather than making every call site branch on that
-/// before calling in, this function itself treats it as a trivial `Ok(())`
-/// no-op — the same shape `check_abi` already uses for "env var unset".
-pub fn check_full_signature(args: &AbiCheckArgs<'_>, exe_path: Option<&Path>) -> Result<(), String> {
+/// this item at all: rather than making the caller branch on that, this
+/// function itself treats it as a trivial `Ok(())` no-op.
+fn compare_full_signature(args: &AbiCheckArgs<'_>, body: &[u8]) -> Result<(), String> {
     let Some(full_signature) = args.full_signature else {
         return Ok(());
     };
-    let Some(exe_path) = exe_path else {
-        return Ok(());
-    };
 
-    if std::fs::metadata(exe_path).is_err() {
-        return Err(format!(
-            "abi-verify: configured game executable path does not exist: {}\n  \
-             `{EXE_PATH_ENV_VAR}` points somewhere that isn't there. Fix it, unset it to fall back to \
-             auto-detecting a standard install, or set `{DISABLED_ENV_VAR}=true` to skip these checks entirely.",
-            exe_path.display()
-        ));
-    }
-
-    let text = text_section(exe_path)?;
-
-    let offset = resolve_offset(args, &text)?;
-
-    match abi_verify::full_signature::matches_at_start(&text[offset..], full_signature) {
+    match abi_verify::full_signature::matches_at_start(body, full_signature) {
         None => Err(format!(
             "abi-verify: the `full_signature` recorded for `{}` is malformed — every token must be a two-digit \
              hex byte or `?`.\n  \
@@ -190,7 +195,7 @@ pub fn check_full_signature(args: &AbiCheckArgs<'_>, exe_path: Option<&Path>) ->
         Some(false) => {
             // As many real bytes as the template describes = the corrected template.
             let actual = abi_verify::full_signature::token_count(full_signature)
-                .map(|count| format_bytes(&text[offset..(offset + count).min(text.len())]))
+                .map(|count| format_bytes(&body[..count.min(body.len())]))
                 .unwrap_or_default();
             Err(format!(
                 "abi-verify: `{}`'s bytes changed — the function at the resolved address no longer matches its \
@@ -208,44 +213,14 @@ pub fn check_full_signature(args: &AbiCheckArgs<'_>, exe_path: Option<&Path>) ->
 }
 
 /// Checks each declared STACK-passed parameter's byte width against what the
-/// disassembler recovers reading that slot in the real game binary — a
-/// fourth check, catching a class the parameter *count* can't (e.g. a
-/// pointer arg silently becoming a non-pointer, or vice versa, without the
-/// slot count changing).
+/// disassembler recovered reading that slot in the real game binary — a third
+/// check, catching a class the parameter *count* can't (e.g. a pointer arg
+/// silently becoming a non-pointer, or vice versa, without the slot count
+/// changing).
 ///
 /// `declared_widths` and `param_names` are indexed by declared parameter
 /// position (`None` width = a Rust type the caller couldn't map to a byte
-/// size; `None` name = an unnamed parameter). Mirrors `check_abi`'s
-/// env-var/path/`.text`/resolve handling exactly, then defers the actual
-/// comparison to [`compare_widths`].
-pub fn check_arg_widths(
-    args: &AbiCheckArgs<'_>,
-    exe_path: Option<&Path>,
-    declared_widths: &[Option<u8>],
-    param_names: &[Option<String>],
-) -> Result<(), String> {
-    let Some(exe_path) = exe_path else {
-        return Ok(());
-    };
-    if std::fs::metadata(exe_path).is_err() {
-        return Err(format!(
-            "abi-verify: configured game executable path does not exist: {}\n  \
-             `{EXE_PATH_ENV_VAR}` points somewhere that isn't there. Fix it, unset it to fall back to \
-             auto-detecting a standard install, or set `{DISABLED_ENV_VAR}=true` to skip these checks entirely.",
-            exe_path.display()
-        ));
-    }
-
-    let text = text_section(exe_path)?;
-
-    let offset = resolve_offset(args, &text)?;
-
-    let recovered = abi_verify::arg_count::recover_arg_count(&text[offset..]);
-    compare_widths(declared_widths, &recovered, param_names, args.item_name)
-}
-
-/// Pure comparison core of [`check_arg_widths`] (testable with a literal
-/// `RecoveredArgCount`, no binary needed).
+/// size; `None` name = an unnamed parameter).
 ///
 /// Only STACK-passed args (declared position >= 4, under the Microsoft x64
 /// convention where the first four integer/pointer args go in registers) are
@@ -390,8 +365,22 @@ pub fn summarize_param_names(names: &[Option<String>]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_abi, check_full_signature, summarize_param_names, AbiCheckArgs};
+    use super::{format_bytes, run_checks, summarize_param_names, AbiCheckArgs};
     use iced_x86::{Code, Encoder, Instruction, MemoryOperand, Register};
+    use std::path::Path;
+
+    /// `run_checks` with no declared widths/names — the width check needs both
+    /// and is covered on its own in `width_tests`.
+    fn errors(args: &AbiCheckArgs<'_>, exe_path: Option<&Path>) -> Vec<String> {
+        run_checks(args, exe_path, &[], &[])
+    }
+
+    /// The single expected failure message, or a panic naming what came instead.
+    fn only_error(args: &AbiCheckArgs<'_>, exe_path: Option<&Path>) -> String {
+        let mut errors = errors(args, exe_path);
+        assert_eq!(errors.len(), 1, "expected exactly one failure, got {errors:?}");
+        errors.remove(0)
+    }
 
     /// Builds a minimal but structurally valid synthetic PE buffer with a
     /// single `.text` section whose raw data is `section_data`. Mirrors
@@ -468,13 +457,6 @@ mod tests {
         encoder.take_buffer()
     }
 
-    /// Renders raw bytes as an IDA-style hex pattern with no wildcards, i.e.
-    /// a pattern that matches only these exact bytes at their exact
-    /// position — enough to drive `resolve_direct` straight to offset 0.
-    fn exact_pattern(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ")
-    }
-
     /// Appends trailing NOP padding after `function_bytes`.
     ///
     /// `aobscan`'s single-threaded scan loop has an off-by-one: it never
@@ -499,7 +481,7 @@ mod tests {
             item_name: "Whatever",
             full_signature: None,
         };
-        assert_eq!(check_abi(&args, None), Ok(()));
+        assert_eq!(errors(&args, None), Vec::<String>::new());
     }
 
     #[test]
@@ -508,7 +490,7 @@ mod tests {
         let pe = make_synthetic_pe(&section_bytes(&function_bytes));
         let path = write_temp_file("match-ok", &pe);
 
-        let pattern = exact_pattern(&function_bytes);
+        let pattern = format_bytes(&function_bytes);
         let args = AbiCheckArgs {
             pattern: &pattern,
             call_target: false,
@@ -516,10 +498,10 @@ mod tests {
             item_name: "TestFn",
             full_signature: None,
         };
-        let result = check_abi(&args, Some(&path));
+        let result = errors(&args, Some(&path));
         let _ = std::fs::remove_file(&path);
 
-        assert_eq!(result, Ok(()));
+        assert_eq!(result, Vec::<String>::new());
     }
 
     #[test]
@@ -528,7 +510,7 @@ mod tests {
         let pe = make_synthetic_pe(&section_bytes(&function_bytes));
         let path = write_temp_file("mismatch", &pe);
 
-        let pattern = exact_pattern(&function_bytes);
+        let pattern = format_bytes(&function_bytes);
         let args = AbiCheckArgs {
             pattern: &pattern,
             call_target: false,
@@ -536,10 +518,9 @@ mod tests {
             item_name: "TestFn",
             full_signature: None,
         };
-        let result = check_abi(&args, Some(&path));
+        let err = only_error(&args, Some(&path));
         let _ = std::fs::remove_file(&path);
 
-        let err = result.expect_err("expected a mismatch error");
         assert!(err.contains("declares 5"), "message should mention declared count: {err}");
         assert!(err.contains("uses 2"), "message should mention recovered count: {err}");
         // The widths are the actionable part: they locate the added/removed slot.
@@ -559,10 +540,9 @@ mod tests {
             item_name: "TestFn",
             full_signature: None,
         };
-        let result = check_abi(&args, Some(&path));
+        let err = only_error(&args, Some(&path));
         let _ = std::fs::remove_file(&path);
 
-        let err = result.expect_err("expected a not-found error");
         assert!(err.contains("could not locate"), "message should say the function wasn't located: {err}");
         assert!(err.contains("FF FF FF"), "message should quote the pattern that failed: {err}");
     }
@@ -575,29 +555,11 @@ mod tests {
             call_target: false,
             declared_args: Some(2),
             item_name: "TestFn",
-            full_signature: None,
+            full_signature: Some("AA BB CC"),
         };
-        let result = check_abi(&args, Some(&path));
-
-        let err = result.expect_err("expected a missing-path error");
+        // One message, not one per check: nothing can be verified at all.
+        let err = only_error(&args, Some(&path));
         assert!(err.contains(&path.display().to_string()), "message should mention the path: {err}");
-    }
-
-    #[test]
-    fn full_signature_none_is_a_no_op() {
-        // `full_signature: None` short-circuits to `Ok(())` before ever
-        // touching the filesystem — pinned down here with a path that
-        // doesn't even exist, to make sure that's really unreachable code
-        // in this case, not just untested.
-        let path = std::env::temp_dir().join("abi-verify-macro-full-sig-none-does-not-exist.exe");
-        let args = AbiCheckArgs {
-            pattern: "AA BB CC",
-            call_target: false,
-            declared_args: Some(99),
-            item_name: "Whatever",
-            full_signature: None,
-        };
-        assert_eq!(check_full_signature(&args, Some(&path)), Ok(()));
     }
 
     #[test]
@@ -606,8 +568,8 @@ mod tests {
         let pe = make_synthetic_pe(&section_bytes(&function_bytes));
         let path = write_temp_file("full-sig-match", &pe);
 
-        let pattern = exact_pattern(&function_bytes);
-        let full_signature = exact_pattern(&function_bytes);
+        let pattern = format_bytes(&function_bytes);
+        let full_signature = format_bytes(&function_bytes);
         let args = AbiCheckArgs {
             pattern: &pattern,
             call_target: false,
@@ -615,10 +577,10 @@ mod tests {
             item_name: "TestFn",
             full_signature: Some(&full_signature),
         };
-        let result = check_full_signature(&args, Some(&path));
+        let result = errors(&args, Some(&path));
         let _ = std::fs::remove_file(&path);
 
-        assert_eq!(result, Ok(()));
+        assert_eq!(result, Vec::<String>::new());
     }
 
     #[test]
@@ -627,11 +589,11 @@ mod tests {
         let pe = make_synthetic_pe(&section_bytes(&function_bytes));
         let path = write_temp_file("full-sig-mismatch", &pe);
 
-        let pattern = exact_pattern(&function_bytes);
-        let real_bytes_hex = exact_pattern(&function_bytes);
+        let pattern = format_bytes(&function_bytes);
+        let real_bytes_hex = format_bytes(&function_bytes);
         let mut mismatched_bytes = function_bytes;
         mismatched_bytes[0] ^= 0xFF; // flip a byte vs. the real function's bytes
-        let full_signature = exact_pattern(&mismatched_bytes);
+        let full_signature = format_bytes(&mismatched_bytes);
 
         let args = AbiCheckArgs {
             pattern: &pattern,
@@ -640,10 +602,9 @@ mod tests {
             item_name: "TestFn",
             full_signature: Some(&full_signature),
         };
-        let result = check_full_signature(&args, Some(&path));
+        let err = only_error(&args, Some(&path));
         let _ = std::fs::remove_file(&path);
 
-        let err = result.expect_err("expected a signature mismatch error");
         assert!(err.contains("bytes changed"), "message should say the bytes changed: {err}");
         assert!(err.contains(&full_signature), "message should quote the recorded template: {err}");
         // The point of the message: the fix is pasteable straight out of it.
@@ -656,7 +617,7 @@ mod tests {
         let pe = make_synthetic_pe(&section_bytes(&function_bytes));
         let path = write_temp_file("full-sig-malformed", &pe);
 
-        let pattern = exact_pattern(&function_bytes);
+        let pattern = format_bytes(&function_bytes);
         let args = AbiCheckArgs {
             pattern: &pattern,
             call_target: false,
@@ -664,27 +625,36 @@ mod tests {
             item_name: "TestFn",
             full_signature: Some("ZZ"),
         };
-        let result = check_full_signature(&args, Some(&path));
+        let err = only_error(&args, Some(&path));
         let _ = std::fs::remove_file(&path);
 
-        let err = result.expect_err("expected a malformed-pattern error");
         assert!(err.contains("malformed"), "message should mention 'malformed': {err}");
     }
 
     #[test]
-    fn full_signature_nonexistent_exe_path_fails_loudly() {
-        let path = std::env::temp_dir().join("abi-verify-macro-full-sig-this-file-does-not-exist.exe");
-        let args = AbiCheckArgs {
-            pattern: "AA BB CC",
-            call_target: false,
-            declared_args: Some(2),
-            item_name: "TestFn",
-            full_signature: Some("AA BB CC"),
-        };
-        let result = check_full_signature(&args, Some(&path));
+    fn every_failing_check_reports_separately() {
+        // Wrong arity AND a wrong byte template: two independent messages, so
+        // neither can mask the other.
+        let function_bytes = two_arg_function_bytes();
+        let pe = make_synthetic_pe(&section_bytes(&function_bytes));
+        let path = write_temp_file("two-failures", &pe);
 
-        let err = result.expect_err("expected a missing-path error");
-        assert!(err.contains(&path.display().to_string()), "message should mention the path: {err}");
+        let pattern = format_bytes(&function_bytes);
+        let mut mismatched_bytes = function_bytes;
+        mismatched_bytes[0] ^= 0xFF;
+        let full_signature = format_bytes(&mismatched_bytes);
+
+        let args = AbiCheckArgs {
+            pattern: &pattern,
+            call_target: false,
+            declared_args: Some(5),
+            item_name: "TestFn",
+            full_signature: Some(&full_signature),
+        };
+        let result = errors(&args, Some(&path));
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(result.len(), 2, "expected both failures: {result:?}");
     }
 
     #[test]
