@@ -16,7 +16,31 @@
 use abi_verify::arg_count::RecoveredArgCount;
 use abi_verify::resolve::ResolveError;
 use abi_verify::{DISABLED_ENV_VAR, EXE_PATH_ENV_VAR};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+/// One-entry `.text` cache: all three checks read it for every annotated item,
+/// so an uncached run re-reads a ~27 MB section 15 times on this project. One
+/// entry is enough — every item in a compilation resolves the same path.
+static TEXT_CACHE: Mutex<Option<(PathBuf, Arc<[u8]>)>> = Mutex::new(None);
+
+fn text_section(exe_path: &Path) -> Result<Arc<[u8]>, String> {
+    let hit = TEXT_CACHE
+        .lock()
+        .ok()
+        .and_then(|cache| cache.as_ref().filter(|(path, _)| path == exe_path).map(|(_, text)| Arc::clone(text)));
+    if let Some(text) = hit {
+        return Ok(text);
+    }
+
+    let text: Arc<[u8]> = abi_verify::pe::read_text_section(exe_path)
+        .map_err(|error| format!("abi-verify: failed to read .text section from {}: {error}", exe_path.display()))?
+        .into();
+    if let Ok(mut cache) = TEXT_CACHE.lock() {
+        *cache = Some((exe_path.to_path_buf(), Arc::clone(&text)));
+    }
+    Ok(text)
+}
 
 /// Resolves the annotated item's locator pattern to a single function offset
 /// within `text`, turning [`ResolveError`] into a human-readable message.
@@ -31,7 +55,7 @@ fn resolve_offset(args: &AbiCheckArgs<'_>, text: &[u8]) -> Result<usize, String>
         ResolveError::NotFound => format!(
             "abi-verify: could not locate `{}` in the game binary: its AOB pattern matched nothing in .text.\n  \
              pattern: {}\n  \
-             A game patch most likely moved or rewrote the function: re-find it wia decompiler and update \
+             A game patch most likely moved or rewrote the function: re-find it via decompiler and update \
              `pattern` to bytes that are stable across builds.",
             args.item_name, args.pattern
         ),
@@ -48,7 +72,9 @@ fn resolve_offset(args: &AbiCheckArgs<'_>, text: &[u8]) -> Result<usize, String>
 pub struct AbiCheckArgs<'a> {
     pub pattern: &'a str,
     pub call_target: bool,
-    pub expected_args: u8,
+    /// Parameter count read off the annotated type itself. `None` when the item
+    /// isn't a bare-fn type, in which case there is nothing to compare.
+    pub declared_args: Option<u8>,
     pub item_name: &'a str,
     /// Developer-recorded byte template for [`check_full_signature`]. `None`
     /// means that check isn't requested for this item at all (fully
@@ -79,24 +105,23 @@ pub fn check_abi(args: &AbiCheckArgs<'_>, exe_path: Option<&Path>) -> Result<(),
         ));
     }
 
-    let text = abi_verify::pe::read_text_section(exe_path)
-        .map_err(|error| format!("abi-verify: failed to read .text section from {}: {error}", exe_path.display()))?;
+    let text = text_section(exe_path)?;
 
     let offset = resolve_offset(args, &text)?;
 
+    let Some(declared) = args.declared_args else {
+        return Ok(());
+    };
     let recovered = abi_verify::arg_count::recover_arg_count(&text[offset..]);
     let total = recovered.total();
-    if total != args.expected_args {
+    if total != declared {
         return Err(format!(
-            "abi-verify: ABI drift in `{}` — the type declares {} parameter(s), the binary uses {} ({} in \
-             registers + {} on the stack).\n  \
+            "abi-verify: ABI drift in `{}` — the type declares {declared} parameter(s), the binary uses {total} \
+             ({} in registers + {} on the stack).\n  \
              recovered stack-arg widths, in order: {}\n  \
              Line those widths up against the declared parameters after the first four (which go in registers): a \
-             single extra or missing entry pinpoints the added/removed slot. Then update the parameter list AND \
-             `expected_args` together — they are checked against each other too.",
+             single extra or missing entry pinpoints the added/removed slot.",
             args.item_name,
-            args.expected_args,
-            total,
             recovered.register_args,
             recovered.stack_args,
             format_widths(&recovered.stack_arg_widths),
@@ -151,8 +176,7 @@ pub fn check_full_signature(args: &AbiCheckArgs<'_>, exe_path: Option<&Path>) ->
         ));
     }
 
-    let text = abi_verify::pe::read_text_section(exe_path)
-        .map_err(|error| format!("abi-verify: failed to read .text section from {}: {error}", exe_path.display()))?;
+    let text = text_section(exe_path)?;
 
     let offset = resolve_offset(args, &text)?;
 
@@ -181,31 +205,6 @@ pub fn check_full_signature(args: &AbiCheckArgs<'_>, exe_path: Option<&Path>) ->
         }
         Some(true) => Ok(()),
     }
-}
-
-/// Checks that the annotated bare-fn type's actually-declared parameter
-/// count agrees with the `expected_args` argument passed to the macro.
-///
-/// Independent of and unconditional on [`check_abi`] and
-/// [`check_full_signature`] above: pure syntax, no I/O, so the proc-macro
-/// wrapper in `lib.rs` runs this even when the exe-path env var is unset and
-/// those other two are silently skipped.
-///
-/// `actual_arity` is the number of `syn::BareFnArg` entries in the annotated
-/// item's underlying bare-fn type, already counted by the caller (this
-/// function itself has nothing to do with `syn`, matching the rest of this
-/// module).
-pub fn check_arity(expected_args: u8, actual_arity: usize, item_name: &str) -> Result<(), String> {
-    if usize::from(expected_args) == actual_arity {
-        return Ok(());
-    }
-    Err(format!(
-        "abi-verify: `{item_name}`'s two declarations disagree — `expected_args` says {expected_args}, but the \
-         type's parameter list has {actual_arity}.\n  \
-         This one is pure syntax (no game binary involved, so it runs everywhere): it means the annotation itself \
-         is stale, not that the game drifted. Update whichever of the two is wrong.\n  \
-         env: `{DISABLED_ENV_VAR}=true` switches the whole macro off."
-    ))
 }
 
 /// Checks each declared STACK-passed parameter's byte width against what the
@@ -237,8 +236,7 @@ pub fn check_arg_widths(
         ));
     }
 
-    let text = abi_verify::pe::read_text_section(exe_path)
-        .map_err(|error| format!("abi-verify: failed to read .text section from {}: {error}", exe_path.display()))?;
+    let text = text_section(exe_path)?;
 
     let offset = resolve_offset(args, &text)?;
 
@@ -392,7 +390,7 @@ pub fn summarize_param_names(names: &[Option<String>]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_abi, check_arity, check_full_signature, summarize_param_names, AbiCheckArgs, DISABLED_ENV_VAR};
+    use super::{check_abi, check_full_signature, summarize_param_names, AbiCheckArgs};
     use iced_x86::{Code, Encoder, Instruction, MemoryOperand, Register};
 
     /// Builds a minimal but structurally valid synthetic PE buffer with a
@@ -497,7 +495,7 @@ mod tests {
         let args = AbiCheckArgs {
             pattern: "AA BB CC",
             call_target: false,
-            expected_args: 99,
+            declared_args: Some(99),
             item_name: "Whatever",
             full_signature: None,
         };
@@ -514,7 +512,7 @@ mod tests {
         let args = AbiCheckArgs {
             pattern: &pattern,
             call_target: false,
-            expected_args: 2,
+            declared_args: Some(2),
             item_name: "TestFn",
             full_signature: None,
         };
@@ -534,7 +532,7 @@ mod tests {
         let args = AbiCheckArgs {
             pattern: &pattern,
             call_target: false,
-            expected_args: 5,
+            declared_args: Some(5),
             item_name: "TestFn",
             full_signature: None,
         };
@@ -557,7 +555,7 @@ mod tests {
         let args = AbiCheckArgs {
             pattern: "FF FF FF FF FF FF FF FF FF FF",
             call_target: false,
-            expected_args: 2,
+            declared_args: Some(2),
             item_name: "TestFn",
             full_signature: None,
         };
@@ -575,7 +573,7 @@ mod tests {
         let args = AbiCheckArgs {
             pattern: "AA BB CC",
             call_target: false,
-            expected_args: 2,
+            declared_args: Some(2),
             item_name: "TestFn",
             full_signature: None,
         };
@@ -595,7 +593,7 @@ mod tests {
         let args = AbiCheckArgs {
             pattern: "AA BB CC",
             call_target: false,
-            expected_args: 99,
+            declared_args: Some(99),
             item_name: "Whatever",
             full_signature: None,
         };
@@ -613,7 +611,7 @@ mod tests {
         let args = AbiCheckArgs {
             pattern: &pattern,
             call_target: false,
-            expected_args: 2,
+            declared_args: Some(2),
             item_name: "TestFn",
             full_signature: Some(&full_signature),
         };
@@ -638,7 +636,7 @@ mod tests {
         let args = AbiCheckArgs {
             pattern: &pattern,
             call_target: false,
-            expected_args: 2,
+            declared_args: Some(2),
             item_name: "TestFn",
             full_signature: Some(&full_signature),
         };
@@ -662,7 +660,7 @@ mod tests {
         let args = AbiCheckArgs {
             pattern: &pattern,
             call_target: false,
-            expected_args: 2,
+            declared_args: Some(2),
             item_name: "TestFn",
             full_signature: Some("ZZ"),
         };
@@ -679,7 +677,7 @@ mod tests {
         let args = AbiCheckArgs {
             pattern: "AA BB CC",
             call_target: false,
-            expected_args: 2,
+            declared_args: Some(2),
             item_name: "TestFn",
             full_signature: Some("AA BB CC"),
         };
@@ -687,22 +685,6 @@ mod tests {
 
         let err = result.expect_err("expected a missing-path error");
         assert!(err.contains(&path.display().to_string()), "message should mention the path: {err}");
-    }
-
-    #[test]
-    fn matching_arity_succeeds() {
-        assert_eq!(check_arity(2, 2, "TestFn"), Ok(()));
-    }
-
-    #[test]
-    fn mismatched_arity_fails_loudly() {
-        let err = check_arity(18, 2, "PushFn").expect_err("expected an arity-mismatch error");
-        assert!(err.contains("expected_args"), "message should mention `expected_args`: {err}");
-        assert!(err.contains("says 18"), "message should mention the expected count: {err}");
-        assert!(err.contains("has 2"), "message should mention the actual count: {err}");
-        assert!(err.contains("PushFn"), "message should mention the item name: {err}");
-        // Needs no binary, so it points at the kill switch, not the exe-path var.
-        assert!(err.contains(DISABLED_ENV_VAR), "message should mention the disable env var: {err}");
     }
 
     #[test]

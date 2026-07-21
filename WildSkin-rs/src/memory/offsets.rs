@@ -20,7 +20,6 @@ use std::ffi::CStr;
 // needs no wildcards.
 #[abi_verify_macro::verify_abi(
     pattern = "E8 ? ? ? ? 0F 57 DB 4C 8B C0 F3 0F 5A DE",
-    expected_args = 1,
     full_signature = "40 53 48 83 EC 30 80 39 00 48 8B C1 8B D1 74 0B 48 FF C0 48 8B D0 80 38 00"
 )]
 type TranslateFn = unsafe extern "system" fn(key: *const i8) -> *const i8;

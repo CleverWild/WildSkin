@@ -14,7 +14,7 @@
 mod check;
 
 use abi_verify::{verification_disabled, DISABLED_ENV_VAR, EXE_PATH_ENV_VAR};
-use check::{check_abi, check_arity, check_arg_widths, check_full_signature, summarize_param_names, AbiCheckArgs};
+use check::{check_abi, check_arg_widths, check_full_signature, summarize_param_names, AbiCheckArgs};
 use proc_macro2::Span;
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -41,7 +41,6 @@ fn warn_game_not_found() {
 struct ParsedAttr {
     pattern: String,
     call_target: bool,
-    expected_args: u8,
     /// Developer-recorded byte template, from an optional `full_signature =
     /// "..."` argument. Absent by default: not every annotated item needs
     /// this stricter check, and existing usages shouldn't have to opt in.
@@ -54,7 +53,6 @@ fn parse_args(attr: proc_macro2::TokenStream) -> syn::Result<ParsedAttr> {
 
     let mut pattern = None;
     let mut call_target = None;
-    let mut expected_args = None;
     let mut full_signature = None;
 
     for meta in pairs {
@@ -71,10 +69,13 @@ fn parse_args(attr: proc_macro2::TokenStream) -> syn::Result<ParsedAttr> {
         match (ident.to_string().as_str(), lit) {
             ("pattern", Lit::Str(lit_str)) => pattern = Some(lit_str.value()),
             ("call_target", Lit::Bool(lit_bool)) => call_target = Some(lit_bool.value),
-            ("expected_args", Lit::Int(lit_int)) => expected_args = Some(lit_int.base10_parse::<u8>()?),
             ("full_signature", Lit::Str(lit_str)) => full_signature = Some(lit_str.value()),
-            ("pattern" | "call_target" | "expected_args" | "full_signature", _) => {
+            ("pattern" | "call_target" | "full_signature", _) => {
                 return Err(syn::Error::new(lit.span(), format!("wrong literal type for `{ident}`")));
+            }
+            // Removed: the count is read off the annotated type's own parameter list.
+            ("expected_args", _) => {
+                return Err(syn::Error::new(ident.span(), "`expected_args` is obsolete — delete it"));
             }
             _ => return Err(syn::Error::new(ident.span(), format!("unknown argument `{ident}`"))),
         }
@@ -83,7 +84,6 @@ fn parse_args(attr: proc_macro2::TokenStream) -> syn::Result<ParsedAttr> {
     Ok(ParsedAttr {
         pattern: pattern.ok_or_else(|| syn::Error::new(span, "missing required argument `pattern`"))?,
         call_target: call_target.unwrap_or(true),
-        expected_args: expected_args.ok_or_else(|| syn::Error::new(span, "missing required argument `expected_args`"))?,
         full_signature,
     })
 }
@@ -176,13 +176,13 @@ pub fn verify_abi(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) 
     let check_args = AbiCheckArgs {
         pattern: &args.pattern,
         call_target: args.call_target,
-        expected_args: args.expected_args,
+        declared_args: bare_fn.and_then(|bare_fn| u8::try_from(bare_fn.inputs.len()).ok()),
         item_name: &item_name,
         full_signature: args.full_signature.as_deref(),
     };
 
     // Each check gets its own `compile_error!` so one failure can't mask another.
-    let mut error_messages: Vec<String> = [
+    let error_messages: Vec<String> = [
         check_abi(&check_args, exe_path),
         // Unconditional: a `None` `full_signature` is a trivial `Ok(())` inside.
         check_full_signature(&check_args, exe_path),
@@ -192,12 +192,6 @@ pub fn verify_abi(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) 
     .filter_map(Result::err)
     .map(&enrich)
     .collect();
-
-    if let Some(bare_fn) = bare_fn
-        && let Err(message) = check_arity(args.expected_args, bare_fn.inputs.len(), &item_name)
-    {
-        error_messages.push(message);
-    }
 
     if error_messages.is_empty() {
         return item;

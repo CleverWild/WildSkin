@@ -9,7 +9,6 @@ use std::ffi::CStr;
 #[abi_verify_macro::verify_abi(
     pattern = "F6 41 0C 01 74 08 48 8B 09",
     call_target = false,
-    expected_args = 1,
     full_signature = "F6 41 0C 01 74 08 48 8B 09 E9 ? ? ? ? C3"
 )]
 type DtorFn = unsafe extern "system" fn(this: *mut AString);
@@ -71,14 +70,12 @@ pub struct CharacterDataStack {
     pub base_skin: CharacterStackData,
 }
 
-// 17 parameters, matching the reference's 16.14 `CharacterDataStack::Push`.
 // `full_signature` is intentionally omitted: 16.14 changed Push's prologue and
 // it wasn't re-captured here — the `pattern` locator still resolves it, and the
 // arg-count check still guards the ABI. Re-add `full_signature` once the 16.14
 // prologue is snapshotted.
 #[abi_verify_macro::verify_abi(
-    pattern = "E8 ? ? ? ? 48 8D 8D ? ? 00 00 E8 ? ? ? ? 48 85 C0 74 ? 48 85 ED",
-    expected_args = 18
+    pattern = "E8 ? ? ? ? 48 8D 8D ? ? 00 00 E8 ? ? ? ? 48 85 C0 74 ? 48 85 ED"
 )]
 // `this`/`model`/`skin`/`gear` are confirmed; every `unknown_*`/`flag_*` name is
 // a deliberately honest placeholder for a slot whose exact purpose wasn't pinned
@@ -109,7 +106,6 @@ type PushFn = unsafe extern "system" fn(
 #[abi_verify_macro::verify_abi(
     pattern = "88 54 24 10 55 53 56 57 41 54 41 55 41 56 41",
     call_target = false,
-    expected_args = 2,
     // First 28 bytes of `CharacterDataStack::Update`'s real 16.14 prologue
     // (non-volatile pushes, `lea rbp,[rsp-0x1f]`, `sub rsp,0x88`) — no relative
     // displacements in this window, so no wildcards needed.

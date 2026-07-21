@@ -12,7 +12,6 @@ use crate::skin_database::{SpecialSkin, SpecialSkinKind};
 // layout-dependent, so its four bytes are wildcarded in the byte template.
 #[abi_verify_macro::verify_abi(
     pattern = "E8 ? ? ? ? 4C 3B ? 0F 94 C0",
-    expected_args = 1,
     full_signature = "48 81 C1 F8 06 00 00 E9 ? ? ? ? CC CC CC CC"
 )]
 type GoldRedirectFn = unsafe extern "system" fn(this: usize) -> *mut AIBaseCommon;
