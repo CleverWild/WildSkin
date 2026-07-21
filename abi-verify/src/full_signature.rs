@@ -26,6 +26,13 @@ fn parse_pattern(pattern: &str) -> Option<Vec<Option<u8>>> {
         .collect()
 }
 
+/// Byte slots `pattern` describes (wildcards included), `None` if malformed —
+/// lets a mismatch report quote back exactly that many real bytes.
+#[must_use]
+pub fn token_count(pattern: &str) -> Option<usize> {
+    parse_pattern(pattern).map(|expected| expected.len())
+}
+
 /// Checks whether `code` matches `pattern` starting at `code[0]` (wildcards
 /// match any byte). Returns:
 /// - `None` if `pattern` itself is malformed (see `parse_pattern`)

@@ -15,6 +15,7 @@
 
 use abi_verify::arg_count::RecoveredArgCount;
 use abi_verify::resolve::ResolveError;
+use abi_verify::{DISABLED_ENV_VAR, EXE_PATH_ENV_VAR};
 use std::path::Path;
 
 /// Resolves the annotated item's locator pattern to a single function offset
@@ -28,14 +29,17 @@ fn resolve_offset(args: &AbiCheckArgs<'_>, text: &[u8]) -> Result<usize, String>
     };
     resolved.map_err(|error| match error {
         ResolveError::NotFound => format!(
-            "abi-verify: signature for `{}` (pattern `{}`) not found in the current game binary's .text section — \
-             the AOB pattern may need updating for this game version",
+            "abi-verify: could not locate `{}` in the game binary: its AOB pattern matched nothing in .text.\n  \
+             pattern: {}\n  \
+             A game patch most likely moved or rewrote the function: re-find it wia decompiler and update \
+             `pattern` to bytes that are stable across builds.",
             args.item_name, args.pattern
         ),
         ResolveError::Ambiguous(count) => format!(
-            "abi-verify: signature for `{}` (pattern `{}`) is no longer a unique locator — it matches {count} \
-             distinct functions in the current game binary, so the wrong one could be checked; tighten the AOB \
-             pattern until it identifies exactly one function",
+            "abi-verify: the AOB pattern for `{}` is no longer a unique locator: it matches {count} distinct \
+             functions, so the wrong one could be verified.\n  \
+             pattern: {}\n  \
+             Lengthen it (append more of the function's opcode bytes) until exactly one function matches.",
             args.item_name, args.pattern
         ),
     })
@@ -68,7 +72,9 @@ pub fn check_abi(args: &AbiCheckArgs<'_>, exe_path: Option<&Path>) -> Result<(),
 
     if std::fs::metadata(exe_path).is_err() {
         return Err(format!(
-            "abi-verify: configured game executable path does not exist: {}",
+            "abi-verify: configured game executable path does not exist: {}\n  \
+             `{EXE_PATH_ENV_VAR}` points somewhere that isn't there. Fix it, unset it to fall back to \
+             auto-detecting a standard install, or set `{DISABLED_ENV_VAR}=true` to skip these checks entirely.",
             exe_path.display()
         ));
     }
@@ -82,14 +88,34 @@ pub fn check_abi(args: &AbiCheckArgs<'_>, exe_path: Option<&Path>) -> Result<(),
     let total = recovered.total();
     if total != args.expected_args {
         return Err(format!(
-            "abi-verify: ABI drift detected for `{}`: expected {} parameter(s), but analysis of the current game \
-             binary found {} (register_args={}, stack_args={}) — the game may have been patched; verify and update \
-             both the Rust FFI type's parameter list AND this `expected_args` value together",
-            args.item_name, args.expected_args, total, recovered.register_args, recovered.stack_args
+            "abi-verify: ABI drift in `{}` — the type declares {} parameter(s), the binary uses {} ({} in \
+             registers + {} on the stack).\n  \
+             recovered stack-arg widths, in order: {}\n  \
+             Line those widths up against the declared parameters after the first four (which go in registers): a \
+             single extra or missing entry pinpoints the added/removed slot. Then update the parameter list AND \
+             `expected_args` together — they are checked against each other too.",
+            args.item_name,
+            args.expected_args,
+            total,
+            recovered.register_args,
+            recovered.stack_args,
+            format_widths(&recovered.stack_arg_widths),
         ));
     }
 
     Ok(())
+}
+
+/// Renders widths as `[8, 4, 1, ?]`, `?` for a slot never seen read.
+fn format_widths(widths: &[Option<u8>]) -> String {
+    let rendered: Vec<String> =
+        widths.iter().map(|width| width.map_or_else(|| "?".to_owned(), |width| width.to_string())).collect();
+    format!("[{}]", rendered.join(", "))
+}
+
+/// Renders bytes as an IDA-style hex string, ready to paste into a pattern.
+fn format_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02X}")).collect::<Vec<_>>().join(" ")
 }
 
 /// Checks a single FFI function pointer's actual bytes against a
@@ -118,7 +144,9 @@ pub fn check_full_signature(args: &AbiCheckArgs<'_>, exe_path: Option<&Path>) ->
 
     if std::fs::metadata(exe_path).is_err() {
         return Err(format!(
-            "abi-verify: configured game executable path does not exist: {}",
+            "abi-verify: configured game executable path does not exist: {}\n  \
+             `{EXE_PATH_ENV_VAR}` points somewhere that isn't there. Fix it, unset it to fall back to \
+             auto-detecting a standard install, or set `{DISABLED_ENV_VAR}=true` to skip these checks entirely.",
             exe_path.display()
         ));
     }
@@ -130,16 +158,27 @@ pub fn check_full_signature(args: &AbiCheckArgs<'_>, exe_path: Option<&Path>) ->
 
     match abi_verify::full_signature::matches_at_start(&text[offset..], full_signature) {
         None => Err(format!(
-            "abi-verify: `full_signature` for `{}` (pattern `{}`) is malformed — check for invalid hex tokens",
-            args.item_name, full_signature
-        )),
-        Some(false) => Err(format!(
-            "abi-verify: byte-level signature mismatch for `{}` — the function's actual bytes at the resolved \
-             address no longer match the recorded `full_signature` template; something inside the function \
-             changed (this is independent of and can fail even when the parameter count still matches) — \
-             re-verify the function and update the recorded template",
+            "abi-verify: the `full_signature` recorded for `{}` is malformed — every token must be a two-digit \
+             hex byte or `?`.\n  \
+             got: {full_signature}",
             args.item_name
         )),
+        Some(false) => {
+            // As many real bytes as the template describes = the corrected template.
+            let actual = abi_verify::full_signature::token_count(full_signature)
+                .map(|count| format_bytes(&text[offset..(offset + count).min(text.len())]))
+                .unwrap_or_default();
+            Err(format!(
+                "abi-verify: `{}`'s bytes changed — the function at the resolved address no longer matches its \
+                 recorded `full_signature`. This is independent of the parameter count and catches edits inside \
+                 the body, or a `pattern` that drifted onto a different function.\n  \
+                 recorded: {full_signature}\n  \
+                 actual:   {actual}\n  \
+                 If the function is still the right one, replace `full_signature` with the `actual` bytes above, \
+                 re-wildcarding (`?`) any rel32 displacement — those move with every build and must not be pinned.",
+                args.item_name
+            ))
+        }
         Some(true) => Ok(()),
     }
 }
@@ -161,8 +200,11 @@ pub fn check_arity(expected_args: u8, actual_arity: usize, item_name: &str) -> R
         return Ok(());
     }
     Err(format!(
-        "abi-verify: `expected_args` ({expected_args}) does not match the number of parameters actually declared \
-         in `{item_name}`'s type ({actual_arity}) — these must be kept in sync; update whichever one is stale"
+        "abi-verify: `{item_name}`'s two declarations disagree — `expected_args` says {expected_args}, but the \
+         type's parameter list has {actual_arity}.\n  \
+         This one is pure syntax (no game binary involved, so it runs everywhere): it means the annotation itself \
+         is stale, not that the game drifted. Update whichever of the two is wrong.\n  \
+         env: `{DISABLED_ENV_VAR}=true` switches the whole macro off."
     ))
 }
 
@@ -188,7 +230,9 @@ pub fn check_arg_widths(
     };
     if std::fs::metadata(exe_path).is_err() {
         return Err(format!(
-            "abi-verify: configured game executable path does not exist: {}",
+            "abi-verify: configured game executable path does not exist: {}\n  \
+             `{EXE_PATH_ENV_VAR}` points somewhere that isn't there. Fix it, unset it to fall back to \
+             auto-detecting a standard install, or set `{DISABLED_ENV_VAR}=true` to skip these checks entirely.",
             exe_path.display()
         ));
     }
@@ -348,7 +392,7 @@ pub fn summarize_param_names(names: &[Option<String>]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_abi, check_arity, check_full_signature, summarize_param_names, AbiCheckArgs};
+    use super::{check_abi, check_arity, check_full_signature, summarize_param_names, AbiCheckArgs, DISABLED_ENV_VAR};
     use iced_x86::{Code, Encoder, Instruction, MemoryOperand, Register};
 
     /// Builds a minimal but structurally valid synthetic PE buffer with a
@@ -498,8 +542,10 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         let err = result.expect_err("expected a mismatch error");
-        assert!(err.contains("expected 5"), "message should mention expected count: {err}");
-        assert!(err.contains("found 2"), "message should mention recovered count: {err}");
+        assert!(err.contains("declares 5"), "message should mention declared count: {err}");
+        assert!(err.contains("uses 2"), "message should mention recovered count: {err}");
+        // The widths are the actionable part: they locate the added/removed slot.
+        assert!(err.contains("recovered stack-arg widths"), "message should list recovered widths: {err}");
     }
 
     #[test]
@@ -519,7 +565,8 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         let err = result.expect_err("expected a not-found error");
-        assert!(err.contains("not found"), "message should mention 'not found': {err}");
+        assert!(err.contains("could not locate"), "message should say the function wasn't located: {err}");
+        assert!(err.contains("FF FF FF"), "message should quote the pattern that failed: {err}");
     }
 
     #[test]
@@ -583,6 +630,7 @@ mod tests {
         let path = write_temp_file("full-sig-mismatch", &pe);
 
         let pattern = exact_pattern(&function_bytes);
+        let real_bytes_hex = exact_pattern(&function_bytes);
         let mut mismatched_bytes = function_bytes;
         mismatched_bytes[0] ^= 0xFF; // flip a byte vs. the real function's bytes
         let full_signature = exact_pattern(&mismatched_bytes);
@@ -598,8 +646,10 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         let err = result.expect_err("expected a signature mismatch error");
-        assert!(err.contains("byte-level"), "message should mention 'byte-level': {err}");
-        assert!(err.contains("signature mismatch"), "message should mention 'signature mismatch': {err}");
+        assert!(err.contains("bytes changed"), "message should say the bytes changed: {err}");
+        assert!(err.contains(&full_signature), "message should quote the recorded template: {err}");
+        // The point of the message: the fix is pasteable straight out of it.
+        assert!(err.contains(&real_bytes_hex), "message should quote the actual bytes: {err}");
     }
 
     #[test]
@@ -648,9 +698,11 @@ mod tests {
     fn mismatched_arity_fails_loudly() {
         let err = check_arity(18, 2, "PushFn").expect_err("expected an arity-mismatch error");
         assert!(err.contains("expected_args"), "message should mention `expected_args`: {err}");
-        assert!(err.contains("(18)"), "message should mention the expected count: {err}");
-        assert!(err.contains("(2)"), "message should mention the actual count: {err}");
+        assert!(err.contains("says 18"), "message should mention the expected count: {err}");
+        assert!(err.contains("has 2"), "message should mention the actual count: {err}");
         assert!(err.contains("PushFn"), "message should mention the item name: {err}");
+        // Needs no binary, so it points at the kill switch, not the exe-path var.
+        assert!(err.contains(DISABLED_ENV_VAR), "message should mention the disable env var: {err}");
     }
 
     #[test]

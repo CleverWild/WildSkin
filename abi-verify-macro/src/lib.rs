@@ -13,17 +13,29 @@
 
 mod check;
 
+use abi_verify::{verification_disabled, DISABLED_ENV_VAR, EXE_PATH_ENV_VAR};
 use check::{check_abi, check_arity, check_arg_widths, check_full_signature, summarize_param_names, AbiCheckArgs};
 use proc_macro2::Span;
+use std::fmt::Write as _;
+use std::sync::atomic::{AtomicBool, Ordering};
 use syn::parse::Parser;
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::{Expr, ExprLit, Lit, Meta, Token};
 
-/// Environment variable pointing at the installed game's executable. Unset
-/// on any machine without the game installed (CI, other developers) — the
-/// check is silently skipped in that case, never breaking their build.
-const EXE_PATH_ENV_VAR: &str = "WILDSKIN_LEAGUE_EXE_PATH";
+/// Keeps the "game not found" notice to once per crate compilation.
+static GAME_NOT_FOUND_WARNED: AtomicBool = AtomicBool::new(false);
+
+// `eprintln!`, not a lint: a promotable warning would break any `-D warnings` build that just has no game installed.
+fn warn_game_not_found() {
+    if !GAME_NOT_FOUND_WARNED.swap(true, Ordering::Relaxed) {
+        eprintln!(
+            "warning: abi-verify: no game executable found ({EXE_PATH_ENV_VAR} is unset and none was \
+             auto-detected at a standard install path) — binary ABI checks skipped; set {EXE_PATH_ENV_VAR} \
+             to your game exe to enable them, or set {DISABLED_ENV_VAR}=true to silence this."
+        );
+    }
+}
 
 /// Parsed `#[verify_abi(...)]` attribute arguments.
 struct ParsedAttr {
@@ -99,6 +111,11 @@ fn type_to_width(ty: &syn::Type) -> Option<u8> {
 
 #[proc_macro_attribute]
 pub fn verify_abi(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    // Switched off entirely (CI): a pure passthrough, emitting nothing at all.
+    if verification_disabled() {
+        return item;
+    }
+
     let args = match parse_args(attr.into()) {
         Ok(args) => args,
         Err(error) => return error.to_compile_error().into(),
@@ -132,17 +149,30 @@ pub fn verify_abi(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) 
     let declared_widths: Vec<Option<u8>> =
         bare_fn.map_or_else(Vec::new, |bare_fn| bare_fn.inputs.iter().map(|input| type_to_width(&input.ty)).collect());
     let param_names_summary = summarize_param_names(&param_names);
-    // Appends `param_names_summary` (when there is one) to an error message
-    // from one of the two exe-dependent checks below.
-    let enrich = |message: String| match &param_names_summary {
-        Some(summary) => format!("{message} (declared parameters: {summary})"),
-        None => message,
-    };
 
-    // Resolved once and shared by both checks below, rather than each
-    // re-reading the env var independently.
+    // Resolved once, shared by all three exe-dependent checks.
     let exe_path = std::env::var(EXE_PATH_ENV_VAR).ok();
     let exe_path = exe_path.as_ref().map(std::path::Path::new);
+    if exe_path.is_none() {
+        warn_game_not_found();
+    }
+
+    // Common footer: what was declared, which binary was read, how to steer it.
+    let enrich = |message: String| {
+        let mut message = message;
+        if let Some(summary) = &param_names_summary {
+            let _ = write!(message, "\n  declared parameters: {summary}");
+        }
+        if let Some(exe_path) = exe_path {
+            let _ = write!(message, "\n  verified against: {}", exe_path.display());
+        }
+        let _ = write!(
+            message,
+            "\n  env: `{EXE_PATH_ENV_VAR}` chooses which binary is verified (unset = auto-detect a standard \
+             install); `{DISABLED_ENV_VAR}=true` turns these checks off entirely."
+        );
+        message
+    };
     let check_args = AbiCheckArgs {
         pattern: &args.pattern,
         call_target: args.call_target,
@@ -151,32 +181,18 @@ pub fn verify_abi(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) 
         full_signature: args.full_signature.as_deref(),
     };
 
-    // All three checks run independently: a full-signature mismatch
-    // (something inside the function's bytes changed), an arg-count
-    // mismatch against the real binary (the calling convention shifted),
-    // and an arity mismatch against the type's own declared parameter list
-    // (the two declarations drifted out of sync with each other) are
-    // meaningfully different failures, so each gets its own
-    // `compile_error!` rather than being merged into one message that would
-    // hide which check actually failed.
-    let mut error_messages = Vec::new();
-    if let Err(message) = check_abi(&check_args, exe_path) {
-        error_messages.push(enrich(message));
-    }
-    // `check_full_signature` itself treats `full_signature: None` as a
-    // trivial `Ok(())`, so this is unconditional rather than gated on
-    // `args.full_signature.is_some()`.
-    if let Err(message) = check_full_signature(&check_args, exe_path) {
-        error_messages.push(enrich(message));
-    }
-    // Fourth, exe-dependent check: declared stack-argument byte widths vs.
-    // what the disassembler reads them at in the real binary.
-    if let Err(message) = check_arg_widths(&check_args, exe_path, &declared_widths, &param_names) {
-        error_messages.push(enrich(message));
-    }
-    // Pure syntax, no I/O: runs unconditionally, even when
-    // `EXE_PATH_ENV_VAR` is unset and the two checks above are silently
-    // skipped.
+    // Each check gets its own `compile_error!` so one failure can't mask another.
+    let mut error_messages: Vec<String> = [
+        check_abi(&check_args, exe_path),
+        // Unconditional: a `None` `full_signature` is a trivial `Ok(())` inside.
+        check_full_signature(&check_args, exe_path),
+        check_arg_widths(&check_args, exe_path, &declared_widths, &param_names),
+    ]
+    .into_iter()
+    .filter_map(Result::err)
+    .map(&enrich)
+    .collect();
+
     if let Some(bare_fn) = bare_fn
         && let Err(message) = check_arity(args.expected_args, bare_fn.inputs.len(), &item_name)
     {

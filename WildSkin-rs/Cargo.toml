@@ -17,7 +17,11 @@ aobscan = "0.3"
 dirs = { workspace = true }
 paste = "1"
 winsafe = { version = "0.0.28", features = ["kernel", "user"] }
-abi-verify-macro = { version = "0.1.0", path = "../abi-verify-macro" }
+abi-verify-macro = { path = "../abi-verify-macro" }
+
+[build-dependencies]
+abi-verify = { path = "../abi-verify" }
+shared = { path = "../shared" }
 
 [lints]
 workspace = true

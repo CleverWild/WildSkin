@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_call:
 
+# No League install exists on a runner required for abi_verify macro
+env:
+  WILDSKIN_SKIP_ABI_VERIFY: "true"
+
 jobs:
   clippy:
     # .cargo/config.toml pins target = x86_64-pc-windows-msvc; only a

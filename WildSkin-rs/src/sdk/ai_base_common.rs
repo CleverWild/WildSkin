@@ -8,12 +8,12 @@ use crate::skin_database::{SpecialSkin, SpecialSkinKind};
 // The game's minion gold-redirect-target lookup. Resolved via a call site
 // (`call GoldRedirectTarget; cmp ...; sete al`), so `call_target = true`
 // follows the `E8 rel32`. The resolved entry is a one-argument tail-call
-// thunk: `add rcx, 0x718; jmp <real fn>` — the `E9 rel32`'s displacement is
+// thunk: `add rcx, 0x6F8; jmp <real fn>` — the `E9 rel32`'s displacement is
 // layout-dependent, so its four bytes are wildcarded in the byte template.
 #[abi_verify_macro::verify_abi(
     pattern = "E8 ? ? ? ? 4C 3B ? 0F 94 C0",
     expected_args = 1,
-    full_signature = "48 81 C1 18 07 00 00 E9 ? ? ? ? CC CC CC CC"
+    full_signature = "48 81 C1 F8 06 00 00 E9 ? ? ? ? CC CC CC CC"
 )]
 type GoldRedirectFn = unsafe extern "system" fn(this: usize) -> *mut AIBaseCommon;
 

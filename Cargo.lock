@@ -1485,6 +1485,7 @@ dependencies = [
 name = "wildskin"
 version = "0.1.0"
 dependencies = [
+ "abi-verify",
  "abi-verify-macro",
  "aobscan",
  "dirs",

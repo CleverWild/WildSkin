@@ -78,11 +78,13 @@ pub struct CharacterDataStack {
 // prologue is snapshotted.
 #[abi_verify_macro::verify_abi(
     pattern = "E8 ? ? ? ? 48 8D 8D ? ? 00 00 E8 ? ? ? ? 48 85 C0 74 ? 48 85 ED",
-    expected_args = 17
+    expected_args = 18
 )]
 // `this`/`model`/`skin`/`gear` are confirmed; every `unknown_*`/`flag_*` name is
 // a deliberately honest placeholder for a slot whose exact purpose wasn't pinned
 // down — position and rough type (int vs. byte-sized flag) only.
+// `str1` is last in the arg list but writes element `+0x10`; the game strlen's
+// it, so omitting it (as both forks did) crashed on the garbage stack slot.
 type PushFn = unsafe extern "system" fn(
     this: usize,
     model: *const i8,
@@ -101,6 +103,7 @@ type PushFn = unsafe extern "system" fn(
     unknown_i32_3: i32,
     unknown_flag_post: bool,
     unknown_i32_4: i32,
+    str1: *const i8,
 ) -> i64;
 
 #[abi_verify_macro::verify_abi(
@@ -181,6 +184,7 @@ impl CharacterDataStack {
                 0,
                 false,
                 1,
+                empty,
             );
         }
     }
@@ -268,13 +272,14 @@ mod tests {
 
     #[test]
     fn push_and_update_call_through_to_a_stub_matching_the_original_signature() {
-        // Stubs mimicking the Win64 game functions with the 17-param arg list
-        // matching the reference's 16.14 `Push` (see `PushFn`). A mismatched arg
+        // Stubs mimicking the Win64 game functions with the 18-param arg list
+        // matching 16.14.794.5912's `Push` (see `PushFn`). A mismatched arg
         // count/type here is the #1 way this layer segfaults against the real
         // game, so exercise the call path, not just the types.
         static PUSH_SKIN: AtomicI32 = AtomicI32::new(0);
         static PUSH_EXTRA: AtomicI32 = AtomicI32::new(0);
         static PUSH_LAST_N3: AtomicI32 = AtomicI32::new(0);
+        static PUSH_STR1_EMPTY: AtomicBool = AtomicBool::new(false);
         static UPDATE_CHANGE: AtomicBool = AtomicBool::new(false);
 
         unsafe extern "system" fn stub_push(
@@ -295,10 +300,13 @@ mod tests {
             _n2: i32,
             _b7: bool,
             n3: i32,
+            str1: *const i8,
         ) -> i64 {
             PUSH_SKIN.store(skin, Ordering::SeqCst);
             PUSH_EXTRA.store(extra, Ordering::SeqCst);
             PUSH_LAST_N3.store(n3, Ordering::SeqCst);
+            // SAFETY: `push` passes `c""`; non-null is checked before reading.
+            PUSH_STR1_EMPTY.store(!str1.is_null() && unsafe { *str1 } == 0, Ordering::SeqCst);
             0
         }
 
@@ -324,9 +332,9 @@ mod tests {
 
         assert_eq!(PUSH_SKIN.load(Ordering::SeqCst), 99);
         assert_eq!(PUSH_EXTRA.load(Ordering::SeqCst), 0);
-        // The final (17th) argument is passed as the literal `1`, matching the
-        // reference's `Push` call — guards the arg list stays complete/aligned.
+        // Checking both ends guards the arg list staying complete and aligned.
         assert_eq!(PUSH_LAST_N3.load(Ordering::SeqCst), 1);
+        assert!(PUSH_STR1_EMPTY.load(Ordering::SeqCst), "18th arg must arrive as a readable empty string");
         assert!(UPDATE_CHANGE.load(Ordering::SeqCst));
     }
 }

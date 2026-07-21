@@ -32,3 +32,6 @@ pub const CLIENT_PROCESS_NAME: &str = "LeagueClient.exe";
 
 /// The product's display name.
 pub const APP_NAME: &str = "WildSkin";
+
+/// Default League install location, probed only when the var is unset.
+pub const STANDARD_LOL_PATH: &str = r"C:\Riot Games\League of Legends\Game\League of Legends.exe";
