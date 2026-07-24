@@ -13,15 +13,22 @@ env:
 jobs:
   fmt:
     # rustfmt is platform-independent and doesn't build, so a cheap Linux
-    # runner is fine even though the crates target windows-msvc. rustfmt.toml
-    # sets nightly-only options that stable silently ignores (harmless
-    # warnings) - run stable here so the gate matches a stable `cargo fmt`.
+    # runner is fine even though the crates target windows-msvc. Toolchain is
+    # stable per rust-toolchain.toml.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
+      # Format workspace members only, not the vendored hudhook path dep.
+      # `cargo fmt --all` descends into it despite the workspace `exclude`, and
+      # rustfmt's `ignore` is nightly-only so it can't skip vendor on stable.
+      # `cargo metadata --no-deps` lists members only, so the -p set is derived
+      # automatically and covers a newly added crate with no hardcoded list.
       - name: Rustfmt (check)
-        run: cargo fmt --all -- --check
+        run: |
+          members=$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c "import json,sys; print(' '.join('-p '+p['name'] for p in json.load(sys.stdin)['packages']))")
+          cargo fmt $members -- --check
 
   clippy:
     # .cargo/config.toml pins target = x86_64-pc-windows-msvc; only a
