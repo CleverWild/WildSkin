@@ -55,7 +55,7 @@ impl KeyBind {
 
     /// Scans for the first pressed key/mouse input and binds `self` to it.
     /// Escape clears; wheel and five mouse buttons are checked before the VK
-    /// range; LCTRL is promoted to RALT when RALT is also down (AltGr reports
+    /// range; LCTRL is promoted to RALT when RALT is also down (`AltGr` reports
     /// as a phantom LCTRL+RALT pair). Returns `true` the frame one is captured.
     pub fn set_to_pressed_key(&mut self, ui: &Ui) -> bool {
         const VK_ESCAPE: u32 = 0x1B;

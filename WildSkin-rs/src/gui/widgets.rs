@@ -62,7 +62,7 @@ pub(super) fn footer(ui: &Ui) {
 }
 
 /// Which hotkey widget is currently armed for a keypress. imgui-rs doesn't
-/// expose ImGui's active-widget-id internals, so use a Rust-side capture flag:
+/// expose `ImGui`'s active-widget-id internals, so use a Rust-side capture flag:
 /// same behavior (click to arm, press to bind, click to cancel).
 static CAPTURING_HOTKEY: std::sync::Mutex<Option<&'static str>> = std::sync::Mutex::new(None);
 

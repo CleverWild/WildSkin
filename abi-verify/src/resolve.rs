@@ -56,8 +56,8 @@ pub fn resolve_direct(text: &[u8], pattern: &str) -> Result<usize, ResolveError>
 }
 
 /// Resolves a signature whose match lands on an `E8 rel32` CALL, following it
-/// to the target. 
-/// 
+/// to the target.
+///
 /// Mirrors `memory::scanner::resolve`'s `sub_base` handling
 /// (identify a function via a call site). Two sites to the same function are
 /// one distinct target, not ambiguous.
