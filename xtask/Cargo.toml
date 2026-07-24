@@ -8,5 +8,3 @@ publish = false
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
 serde_json = { workspace = true }
-ureq = { workspace = true }
-zip = "8.6.0"

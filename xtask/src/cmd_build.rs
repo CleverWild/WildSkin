@@ -6,20 +6,6 @@ use clap::Args;
 
 use crate::StreamingCommandExt as _;
 
-/// The `irobf` flag set applied by `--obfuscate`.
-///
-/// `--irobf-fla` (control-flow flattening) is excluded: it crashes
-/// `rustc_driver.dll` (`APInt.h:1566`, "Too many bits for int64_t") compiling
-/// `wildskin`'s `windows`-crate code via `hudhook` (confirmed by bisecting).
-/// Re-adding it needs re-verifying against whatever triggered the crash.
-const OBFUSCATION_LLVM_ARGS: &[&str] = &[
-    "--irobf",
-    "--irobf-indbr",
-    "--irobf-icall",
-    "--irobf-indgv",
-    "--irobf-cse",
-];
-
 /// Builds the DLL and prints the DLL/exe paths.
 ///
 /// `wildskin-injector` is a private, git-ignored separate workspace (absent
@@ -30,12 +16,6 @@ pub struct BuildArgs {
     /// Build in release mode (optimized, `panic = "abort"`, LTO) instead of the faster debug profile.
     #[arg(short, long)]
     release: bool,
-
-    /// Build with the `ollvm` toolchain and Arkari `irobf` passes; implies
-    /// `--release` (hardened distribution builds, not daily dev). See
-    /// `OBFUSCATION_LLVM_ARGS` for the pass set.
-    #[arg(long)]
-    obfuscate: bool,
 
     /// Sets output to temp dir instead of `target/`.
     #[arg(long)]
@@ -48,10 +28,6 @@ pub struct BuildArgs {
 
 pub fn run(args: &BuildArgs) -> Result<(), Box<dyn std::error::Error>> {
     let has_injector = std::path::Path::new("WildSkin-injector").is_dir();
-
-    if args.obfuscate {
-        crate::cmd_setup_ollvm::run()?;
-    }
 
     // DLL: root workspace. Injector: private separate workspace, built by
     // manifest path; `find_artifact` reads absolute paths from cargo's JSON.
@@ -111,12 +87,9 @@ fn run_cargo_build(
     target_args: &[&str],
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut cargo_args: Vec<&str> = vec![];
-    if args.obfuscate {
-        cargo_args.push("+ollvm");
-    }
     cargo_args.push("build");
     cargo_args.extend_from_slice(target_args);
-    if args.release || args.obfuscate {
+    if args.release {
         cargo_args.push("--release");
     }
 
@@ -150,14 +123,6 @@ fn run_cargo_build(
         "CARGO_PRIMARY_PACKAGE",
     ] {
         command.env_remove(key);
-    }
-    if args.obfuscate {
-        let rustflags = OBFUSCATION_LLVM_ARGS
-            .iter()
-            .map(|flag| format!("-Cllvm-args={flag}"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        command.env("RUSTFLAGS", rustflags);
     }
 
     Ok(command.run_rendering_cargo_json()?.join("\n"))

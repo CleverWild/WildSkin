@@ -40,19 +40,12 @@ to dig through `target/`.
 | Flag | Effect |
 | --- | --- |
 | `-r`, `--release` | Release profile (optimized, LTO, `panic = "abort"`) instead of the faster debug profile. |
-| `--obfuscate` | Builds with the `ollvm` toolchain and Arkari `irobf` obfuscation passes; implies `--release`. |
 | `--temp` | Copies the built DLL/exe to a temp dir instead of leaving them under `target/`. |
 | `-o`, `--open` | Opens the output dir in Explorer after building. Combined with `--temp`, the temp dir is deleted once you close that Explorer window. |
 
 `WildSkin_Injector.exe` is built alongside the DLL only when
 `WildSkin-injector/` is checked out; a plain public-repo clone builds just
 the DLL.
-
-**`cargo xtask setup-ollvm`**
-
-Downloads and `rustup toolchain link`s the pinned `ollvm` toolchain that
-`build --obfuscate` needs. Idempotent (skips the download if already
-extracted). `cargo xtask build --obfuscate` runs it automatically.
 
 ## Usage
 
