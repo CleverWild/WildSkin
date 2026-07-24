@@ -11,6 +11,18 @@ env:
   WILDSKIN_SKIP_ABI_VERIFY: "true"
 
 jobs:
+  fmt:
+    # rustfmt is platform-independent and doesn't build, so a cheap Linux
+    # runner is fine even though the crates target windows-msvc. rustfmt.toml
+    # sets nightly-only options that stable silently ignores (harmless
+    # warnings) - run stable here so the gate matches a stable `cargo fmt`.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Rustfmt (check)
+        run: cargo fmt --all -- --check
+
   clippy:
     # .cargo/config.toml pins target = x86_64-pc-windows-msvc; only a
     # windows-latest runner can build that natively.
