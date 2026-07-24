@@ -1,13 +1,12 @@
-//! Ports `GUI.cpp` tab-for-tab: the whole imgui menu, split one file per tab.
+//! Ports `GUI.cpp` tab-for-tab: the imgui menu, one file per tab.
 //!
-//! - [`widgets`] — shared combo/footer/hotkey widgets.
-//! - [`keybind_input`] — imgui-driven `KeyBind` press/hold/capture logic.
+//! - [`widgets`] shared combo/footer/hotkey widgets.
+//! - [`keybind_input`] imgui `KeyBind` press/hold/capture logic.
 //! - `local_player` / `other_champs` / `global_skins` / `logger_tab` /
-//!   `extras` — one module per menu tab.
+//!   `extras` one module per tab.
 //!
-//! Every raw-memory touch here routes through already-reviewed earlier tasks
-//! (`sdk::*`, `skin_database`, `config`, `state`) — this surface is imgui
-//! widget wiring and pure logic, not new unsafe/FFI surface.
+//! Raw-memory touches route through reviewed layers (`sdk::*`, `skin_database`,
+//! `config`, `state`); this is widget wiring, not new unsafe/FFI surface.
 
 mod extras;
 mod global_skins;
@@ -15,28 +14,23 @@ mod keybind_input;
 mod local_player;
 mod logger_tab;
 mod other_champs;
+pub mod overlay;
 mod widgets;
 
 use hudhook::imgui::{self, Ui};
 
-/// Draws the main menu window and dispatches to each tab module. Called once
-/// per frame from `Overlay::render` while the menu is open.
+/// Draws the menu window and dispatches to each tab. Called per frame from
+/// `Overlay::render` while the menu is open.
 pub fn render(ui: &Ui) {
     let state = crate::state::get();
     let off = &state.offsets;
     let player = off.player();
-    // SAFETY: `render` is only called (via Task 18's `Overlay::render`)
-    // while the game is `Running` and `state::get()` is initialized, so the
-    // player, if present, is live.
+    // SAFETY: `render` runs only while the game is `Running` and `state` is
+    // initialized, so the player, if present, is live.
     let player_ref = unsafe { off.player_ref() };
-    // SAFETY: `render` is only called (via Task 18's `Overlay::render`)
-    // while the game is `Running` and `state::get()` is initialized, so the
-    // hero list is live.
+    // SAFETY: as above; the hero list is live.
     let heroes = unsafe { off.hero_list() };
-    let my_team = player_ref.map_or(1, |p_ref| {
-        // SAFETY: `p_ref` is live, per `off.player_ref()`'s own contract.
-        unsafe { p_ref.team() }
-    });
+    let my_team = player_ref.map_or(1, |p_ref| p_ref.team);
 
     ui.window(shared::APP_NAME)
         .flags(

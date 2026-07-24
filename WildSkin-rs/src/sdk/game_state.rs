@@ -21,13 +21,19 @@ mod tests {
 
     #[test]
     fn detects_running_state() {
-        let client = GameClient { _padgame_state: [0; 0x10], game_state: GAME_STATE_RUNNING };
+        let client = GameClient {
+            _padgame_state: [0; 0x10],
+            game_state: GAME_STATE_RUNNING,
+        };
         unsafe { assert!(is_running(&raw const client)) };
     }
 
     #[test]
     fn rejects_non_running_states() {
-        let client = GameClient { _padgame_state: [0; 0x10], game_state: 0 }; // LoadingScreen
+        let client = GameClient {
+            _padgame_state: [0; 0x10],
+            game_state: 0,
+        }; // LoadingScreen
         unsafe { assert!(!is_running(&raw const client)) };
     }
 

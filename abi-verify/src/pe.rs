@@ -1,20 +1,14 @@
-//! Reads the `.text` section out of a PE executable **file on disk**, for
-//! comparison against AOB signatures at compile time (the game isn't
-//! necessarily running).
+//! Reads the `.text` section out of a PE file on disk, for compile-time
+//! comparison against AOB signatures (the game need not be running).
 //!
-//! This is the file-layout counterpart to `WildSkin-rs`'s
-//! `memory::scanner::text_section`, which walks the SAME header format but
-//! against a live, loaded process image. The two differ in one key way: a
-//! loaded image has already had its sections relocated to `VirtualAddress`
-//! by the OS loader, while an on-disk file only has `PointerToRawData` (the
-//! raw, file-aligned section offset, which can differ from the
-//! memory-aligned `VirtualAddress`).
+//! File-layout counterpart to `WildSkin-rs`'s `memory::scanner::text_section`,
+//! which walks the same headers against a live image. Key difference: a loaded
+//! image is relocated to `VirtualAddress`; an on-disk file uses
+//! `PointerToRawData` (file-aligned, can differ from `VirtualAddress`).
 //!
-//! Unlike the live-memory version in `memory::scanner`, this reads from an
-//! arbitrary on-disk file buffer, so plain bounds-checked byte reads are
-//! used instead of unsafe struct-cast pointer derefs — transmuting an
-//! untrusted, arbitrarily-aligned file buffer into a `#[repr(C)]` struct
-//! reference is UB-prone in a way that live, loader-mapped memory isn't.
+//! Uses bounds-checked byte reads, not unsafe struct-cast derefs: transmuting
+//! an untrusted, arbitrarily-aligned file buffer into a `#[repr(C)]` ref is
+//! UB-prone in a way loader-mapped memory isn't.
 
 use std::io::{Error, ErrorKind, Result};
 use std::path::Path;
@@ -47,20 +41,18 @@ fn read_i32(data: &[u8], offset: usize) -> Result<i32> {
     Ok(i32::from_le_bytes(bytes.try_into().unwrap()))
 }
 
-/// Size in bytes of `IMAGE_FILE_HEADER`, immediately following the 4-byte
-/// `PE\0\0` signature.
+/// Size of `IMAGE_FILE_HEADER`, right after the 4-byte `PE\0\0` signature.
 const IMAGE_FILE_HEADER_SIZE: usize = 20;
 /// Size in bytes of a single `IMAGE_SECTION_HEADER` entry.
 const IMAGE_SECTION_HEADER_SIZE: usize = 40;
 /// The 8-byte, NUL-padded section name PE uses for the code section.
 const TEXT_SECTION_NAME: &[u8; 8] = b".text\0\0\0";
 
-/// Reads the `.text` section's raw bytes directly out of a PE executable file on disk.
+/// Reads the `.text` section's raw bytes out of a PE file on disk.
 ///
-/// Walks `IMAGE_DOS_HEADER` -> `IMAGE_NT_HEADERS64` -> the section table,
-/// exactly like `memory::scanner::text_section` does against a live module,
-/// but using `PointerToRawData`/`SizeOfRawData` (on-disk offsets) instead of
-/// `VirtualAddress` (in-memory offsets).
+/// Walks `IMAGE_DOS_HEADER` -> `IMAGE_NT_HEADERS64` -> section table like
+/// `memory::scanner::text_section`, but using `PointerToRawData`/
+/// `SizeOfRawData` (on-disk) not `VirtualAddress` (in-memory).
 pub fn read_text_section(exe_path: &Path) -> Result<Vec<u8>> {
     let data = std::fs::read(exe_path)?;
 
@@ -74,7 +66,9 @@ pub fn read_text_section(exe_path: &Path) -> Result<Vec<u8>> {
         .map_err(|_| invalid_data("PE file has a negative e_lfanew offset"))?;
 
     if data.get(nt_offset..nt_offset + 4) != Some(b"PE\0\0") {
-        return Err(invalid_data("not a valid PE file (missing PE\\0\\0 signature)"));
+        return Err(invalid_data(
+            "not a valid PE file (missing PE\\0\\0 signature)",
+        ));
     }
 
     // IMAGE_FILE_HEADER starts right after the 4-byte NT signature.
@@ -82,8 +76,7 @@ pub fn read_text_section(exe_path: &Path) -> Result<Vec<u8>> {
     let number_of_sections = read_u16(&data, file_header_offset + 2)?;
     let size_of_optional_header = read_u16(&data, file_header_offset + 16)?;
 
-    // Section table starts right after the optional header, which itself
-    // starts right after IMAGE_FILE_HEADER.
+    // Section table follows the optional header, which follows IMAGE_FILE_HEADER.
     let section_table_offset =
         file_header_offset + IMAGE_FILE_HEADER_SIZE + size_of_optional_header as usize;
 

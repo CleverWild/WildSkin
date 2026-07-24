@@ -6,16 +6,12 @@ use clap::Args;
 
 use crate::StreamingCommandExt as _;
 
-/// The `irobf` flag set applied to both crates by `--obfuscate`.
+/// The `irobf` flag set applied by `--obfuscate`.
 ///
-/// `--irobf-fla` (control-flow flattening) is deliberately excluded: it
-/// crashes `rustc_driver.dll` (`APInt.h:1566`,
-/// `getSignificantBits() <= 64 && "Too many bits for int64_t"`) while
-/// compiling `wildskin`, which pulls in `windows`-crate code through
-/// `hudhook` — confirmed by bisecting against the same build, not just
-/// going on the upstream toolchain's own README warning about
-/// `windows-rs`/`rand`/`clap`. Re-adding it needs re-verifying against
-/// whatever code triggered the crash first.
+/// `--irobf-fla` (control-flow flattening) is excluded: it crashes
+/// `rustc_driver.dll` (`APInt.h:1566`, "Too many bits for int64_t") compiling
+/// `wildskin`'s `windows`-crate code via `hudhook` (confirmed by bisecting).
+/// Re-adding it needs re-verifying against whatever triggered the crash.
 const OBFUSCATION_LLVM_ARGS: &[&str] = &[
     "--irobf",
     "--irobf-indbr",
@@ -26,19 +22,18 @@ const OBFUSCATION_LLVM_ARGS: &[&str] = &[
 
 /// Builds the DLL and prints the DLL/exe paths.
 ///
-/// `wildskin-injector` is a private, git-ignored *separate* workspace (its own
-/// `Cargo.toml`/`Cargo.lock`, absent from a plain clone of this public repo),
-/// so it's built by manifest path when present — not via the root `--workspace`.
+/// `wildskin-injector` is a private, git-ignored separate workspace (absent
+/// from a plain clone), so it's built by manifest path when present, not via
+/// the root `--workspace`.
 #[derive(Args)]
 pub struct BuildArgs {
     /// Build in release mode (optimized, `panic = "abort"`, LTO) instead of the faster debug profile.
     #[arg(short, long)]
     release: bool,
 
-    /// Build with the `ollvm` toolchain (`cargo xtask setup-ollvm` links it)
-    /// and the Arkari `irobf` obfuscation passes — implies `--release` (the
-    /// flags are meant for hardened distribution builds, not day-to-day
-    /// development). See `OBFUSCATION_LLVM_ARGS` for the exact pass set.
+    /// Build with the `ollvm` toolchain and Arkari `irobf` passes; implies
+    /// `--release` (hardened distribution builds, not daily dev). See
+    /// `OBFUSCATION_LLVM_ARGS` for the pass set.
     #[arg(long)]
     obfuscate: bool,
 
@@ -58,17 +53,15 @@ pub fn run(args: &BuildArgs) -> Result<(), Box<dyn std::error::Error>> {
         crate::cmd_setup_ollvm::run()?;
     }
 
-    // DLL: root workspace. Injector: its own private, git-ignored workspace,
-    // built by manifest path (not as a member); `find_artifact` reads the
-    // absolute paths out of cargo's JSON, so the target location doesn't matter.
+    // DLL: root workspace. Injector: private separate workspace, built by
+    // manifest path; `find_artifact` reads absolute paths from cargo's JSON.
     let dll_json = run_cargo_build(args, &["-p", "wildskin", "--lib"])?;
     let dll_path = find_artifact(dll_json.as_bytes(), "cdylib", "WildSkin")
         .ok_or("could not find WildSkin.dll in cargo's build output")?;
     println!("Built:  {}", dll_path.display());
 
     let exe_path = if has_injector {
-        let exe_json =
-            run_cargo_build(args, &["--manifest-path", "WildSkin-injector/Cargo.toml"])?;
+        let exe_json = run_cargo_build(args, &["--manifest-path", "WildSkin-injector/Cargo.toml"])?;
         let exe_path = find_artifact(exe_json.as_bytes(), "bin", "WildSkin_Injector")
             .ok_or("could not find WildSkin_Injector.exe in cargo's build output")?;
         println!("Built:  {}", exe_path.display());
@@ -111,9 +104,8 @@ pub fn run(args: &BuildArgs) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Runs one `cargo build` (root DLL or the injector's separate workspace) with
-/// the profile/obfuscation flags from `args`, returning its
-/// `--message-format=json` output joined by newlines.
+/// Runs one `cargo build` (root DLL or injector workspace) with `args`' flags,
+/// returning its `--message-format=json` output joined by newlines.
 fn run_cargo_build(
     args: &BuildArgs,
     target_args: &[&str],
@@ -131,15 +123,11 @@ fn run_cargo_build(
     println!("=== cargo {} ===", cargo_args.join(" "));
     let mut command = Command::new("cargo");
     command.args(&cargo_args);
-    // `cargo xtask` is `cargo run -p xtask`, which sets `CARGO_MANIFEST_DIR`
-    // and the `CARGO_PKG_*`/`CARGO_BIN_NAME`/`CARGO_CRATE_NAME` family to
-    // describe *xtask's own* package for this process. Left in place, this
-    // nested `cargo build` inherits them, and a stray `CARGO_MANIFEST_DIR`
-    // (xtask's dir instead of absent) flips `ring`'s build-script fingerprint
-    // on every single invocation, forcing it — and everything depending on
-    // it (`rustls`, `ureq`, ...) — to recompile from scratch every time.
-    // (Deliberately narrow: unlike a blanket `CARGO_`-prefix strip, this
-    // leaves `CARGO_HOME`/`CARGO_TARGET_DIR`/etc. untouched.)
+    // `cargo xtask` (= `cargo run -p xtask`) sets `CARGO_MANIFEST_DIR` and the
+    // `CARGO_PKG_*` family for xtask itself. Inherited by this nested build, a
+    // stray `CARGO_MANIFEST_DIR` flips `ring`'s build-script fingerprint every
+    // run, recompiling it (and `rustls`/`ureq`/...) from scratch. Narrow on
+    // purpose: leaves `CARGO_HOME`/`CARGO_TARGET_DIR`/etc. untouched.
     for key in [
         "CARGO_MANIFEST_DIR",
         "CARGO_MANIFEST_PATH",
@@ -175,11 +163,10 @@ fn run_cargo_build(
     Ok(command.run_rendering_cargo_json()?.join("\n"))
 }
 
-/// The `--temp --open` watcher script. Opens `-Dir` in Explorer, waits for that
-/// window to close, then deletes the folder. It pins the folder by an OS handle
-/// (`GetFinalPathNameByHandle`), not its name, so a rename in Explorer is still
-/// cleaned up — Explorer's own reported path goes stale after a rename, the
-/// handle doesn't. Run via `-File` so no cross-language quoting is needed.
+/// The `--temp --open` watcher script: opens `-Dir` in Explorer, waits for the
+/// window to close, then deletes the folder. Pins the folder by OS handle
+/// (`GetFinalPathNameByHandle`), not name, so a rename is still cleaned up.
+/// Run via `-File` to avoid cross-language quoting.
 const CLEANUP_WATCHER_PS1: &str = include_str!("../cleanup-watcher.ps1");
 
 /// Writes [`CLEANUP_WATCHER_PS1`] to a fixed temp path and launches it detached
@@ -205,12 +192,10 @@ fn spawn_temp_cleanup_watcher(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Cargo's `--message-format=json` output is one JSON object per line; the
-/// `compiler-artifact` message for a build target lists its real output
-/// path(s) directly. Filtering by `target.kind` alone isn't enough: `xtask`
-/// is also a `bin` target sharing this same workspace build, so the target
-/// name must match too, or a search for "the bin artifact" can just as
-/// easily grab xtask's own executable instead of the injector's.
+/// Cargo's `--message-format=json` is one JSON object per line; a
+/// `compiler-artifact` message lists a target's output paths. Kind alone isn't
+/// enough (xtask is also a `bin`), so the target name must match too, else a
+/// "bin artifact" search grabs xtask's own exe instead of the injector's.
 fn find_artifact(json_output: &[u8], kind: &str, name: &str) -> Option<PathBuf> {
     for line in String::from_utf8_lossy(json_output).lines() {
         let Ok(msg) = serde_json::from_str::<serde_json::Value>(line) else {

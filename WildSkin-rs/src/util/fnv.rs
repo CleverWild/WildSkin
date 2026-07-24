@@ -10,7 +10,7 @@ pub const fn fnv1a(s: &str) -> u64 {
         hash = hash.wrapping_mul(FNV_PRIME);
         i += 1;
     }
-    // Original hashes the NUL terminator too (loop runs once more on '\0').
+    // Hash the NUL terminator too (one extra mix round on '\0').
     hash ^= 0u64;
     hash = hash.wrapping_mul(FNV_PRIME);
     hash
@@ -34,10 +34,8 @@ mod tests {
 
     #[test]
     fn hashes_the_nul_terminator_like_the_original() {
-        // The original's runtime loop does `result ^= *str++; result *= prime;`
-        // and keeps going through the terminating '\0' — one extra mix round
-        // beyond hashing the visible bytes alone. Lock that in explicitly:
-        // XOR-by-zero is a no-op, so the NUL step is just one more multiply.
+        // The NUL-terminator step is one extra mix round beyond the visible
+        // bytes; XOR-by-zero is a no-op, so it's just one more multiply.
         let mut expected = FNV_OFFSET_BASIS;
         expected ^= b'A' as u64;
         expected = expected.wrapping_mul(FNV_PRIME);

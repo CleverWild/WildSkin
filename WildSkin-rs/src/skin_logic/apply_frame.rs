@@ -1,9 +1,8 @@
-//! `Hooks::init()`'s per-frame skin application: the one-shot saved-choice
-//! apply plus the every-frame re-sync of hero transform stacks and minion/
-//! ward/jungle-mob skins.
+//! Per-frame skin application: one-shot saved-choice apply plus every-frame
+//! re-sync of hero transform stacks and minion/ward/jungle-mob skins.
 
-use crate::fnv::fnv1a;
 use crate::sdk::ai_base_common::AIBaseCommon;
+use crate::util::fnv::fnv1a;
 use std::ffi::CString;
 use std::sync::Once;
 
@@ -26,24 +25,22 @@ unsafe fn change_skin_for_object(
         stack.base_skin.skin = skin;
         // SAFETY: per fn contract.
         unsafe {
-            stack.update(offsets.fns.character_data_stack_update, true);
+            stack.update(offsets.fns.skin_apply.update, true);
         }
     }
 }
 
-/// Ports `Hooks::init()`: applies the player's/other champions' saved skin
-/// choices exactly once (`CHANGE_SKINS_ONCE`, mirroring the original's
-/// `std::call_once(change_skins, ...)`), then every frame re-syncs each
-/// hero's transform-stack front entry and re-applies minion/ward/jungle-mob
-/// skins — minions can respawn, so only the initial champion choice is a
-/// true one-shot.
+/// Applies saved skin choices once (`CHANGE_SKINS_ONCE`), then every frame
+/// re-syncs each hero's transform-stack front and re-applies minion/ward/
+/// jungle-mob skins (minions respawn, so only the champion choice is one-shot).
 ///
 /// # Safety
-/// Caller must be running inside the target game process with `state::get()`
-/// already initialized and the offsets it holds resolved against a live,
-/// `Running` game (hero/minion lists, player pointer, etc. must all be
-/// currently valid).
-#[allow(clippy::significant_drop_tightening, reason = "`config` is read on every iteration of the minions loop; clippy's suggested drop point is inside that loop and fails to compile across iterations (E0382)")]
+/// Must run inside the target game process with `state::get()` initialized and
+/// its offsets resolved against a live, `Running` game.
+#[expect(
+    clippy::significant_drop_tightening,
+    reason = "`config` is read on every iteration of the minions loop; clippy's suggested drop point is inside that loop and fails to compile across iterations (E0382)"
+)]
 pub unsafe fn apply_frame() {
     let state = crate::state::get();
     let off = &state.offsets;
@@ -66,33 +63,40 @@ pub unsafe fn apply_frame() {
         let config = state.config.lock().unwrap();
 
         if let Some(p_ref) = player_ref
-            && config.current_combo_skin_index > 0 {
-                // SAFETY: per fn contract.
-                let stack = unsafe { p_ref.character_data_stack_ref(off.fields.character_data_stack) };
-                // SAFETY: per fn contract.
-                let model = unsafe { stack.base_skin.model.as_str() }.to_owned();
-                let hash = fnv1a(&model);
-                if let Some(values) = state.database.champions_skins.get(&hash)
-                    && let Some(entry) = values.get((config.current_combo_skin_index - 1) as usize)
-                        && let Ok(c_model) = CString::new(entry.model_name.clone()) {
-                            // SAFETY: per fn contract.
-                            unsafe {
-                                p_ref.change_skin(off.fields.character_data_stack, off.fields.skin_id, off.fns.character_data_stack_push, off.fns.character_data_stack_update, off.fns.msvc_string_dtor, &c_model, entry.skin_id, &state.database.special_skins);
-                            }
-                        }
-            }
-
-        let my_team = player_ref.map_or(1, |p_ref| {
+            && config.current_combo_skin_index > 0
+        {
             // SAFETY: per fn contract.
-            unsafe { p_ref.team() }
-        });
+            let stack = unsafe { p_ref.character_data_stack_ref(off.fields.character_data_stack) };
+            // SAFETY: per fn contract.
+            let model = unsafe { stack.base_skin.model.as_str() }.to_owned();
+            let hash = fnv1a(&model);
+            if let Some(values) = state.database.champions_skins.get(&hash)
+                && let Some(entry) = values.get((config.current_combo_skin_index - 1) as usize)
+                && let Ok(c_model) = CString::new(entry.model_name.clone())
+            {
+                // SAFETY: per fn contract.
+                unsafe {
+                    p_ref.change_skin(
+                        off.fields.character_data_stack,
+                        off.fields.skin_id,
+                        &off.fns.skin_apply,
+                        &c_model,
+                        entry.skin_id,
+                        &state.database.special_skins,
+                    );
+                }
+            }
+        }
+
+        let my_team = player_ref.map_or(1, |p_ref| p_ref.team);
         for &hero_ref in heroes {
             if player.map(|p| p as usize) == Some(std::ptr::from_ref(hero_ref) as usize) {
                 continue;
             }
             let champ_hash = {
                 // SAFETY: per fn contract.
-                let stack = unsafe { hero_ref.character_data_stack_ref(off.fields.character_data_stack) };
+                let stack =
+                    unsafe { hero_ref.character_data_stack_ref(off.fields.character_data_stack) };
                 // SAFETY: per fn contract.
                 fnv1a(unsafe { stack.base_skin.model.as_str() })
             };
@@ -100,24 +104,37 @@ pub unsafe fn apply_frame() {
                 continue;
             }
 
-            // SAFETY: per fn contract.
-            let is_enemy = my_team != unsafe { hero_ref.team() };
+            let is_enemy = my_team != hero_ref.team;
             let idx = if is_enemy {
-                config.current_combo_enemy_skin_index.get(&champ_hash).copied()
+                config
+                    .current_combo_enemy_skin_index
+                    .get(&champ_hash)
+                    .copied()
             } else {
-                config.current_combo_ally_skin_index.get(&champ_hash).copied()
+                config
+                    .current_combo_ally_skin_index
+                    .get(&champ_hash)
+                    .copied()
             };
 
             if let Some(idx) = idx
                 && idx > 0
-                    && let Some(values) = state.database.champions_skins.get(&champ_hash)
-                        && let Some(entry) = values.get((idx - 1) as usize)
-                            && let Ok(c_model) = CString::new(entry.model_name.clone()) {
-                                // SAFETY: per fn contract.
-                                unsafe {
-                                    hero_ref.change_skin(off.fields.character_data_stack, off.fields.skin_id, off.fns.character_data_stack_push, off.fns.character_data_stack_update, off.fns.msvc_string_dtor, &c_model, entry.skin_id, &state.database.special_skins);
-                                }
-                            }
+                && let Some(values) = state.database.champions_skins.get(&champ_hash)
+                && let Some(entry) = values.get((idx - 1) as usize)
+                && let Ok(c_model) = CString::new(entry.model_name.clone())
+            {
+                // SAFETY: per fn contract.
+                unsafe {
+                    hero_ref.change_skin(
+                        off.fields.character_data_stack,
+                        off.fields.skin_id,
+                        &off.fns.skin_apply,
+                        &c_model,
+                        entry.skin_id,
+                        &state.database.special_skins,
+                    );
+                }
+            }
         }
     });
 
@@ -130,8 +147,7 @@ pub unsafe fn apply_frame() {
         }
         // SAFETY: per fn contract.
         let champ_hash = fnv1a(unsafe { stack.base_skin.model.as_str() });
-        // Viego/Sylas transform into a different champion as a 2nd form; our
-        // own skin id may not match that champion's ids.
+        // Viego/Sylas transform into a 2nd-form champion; our skin id may not match.
         if champ_hash == fnv1a("Viego") || champ_hash == fnv1a("Sylas") {
             continue;
         }
@@ -141,15 +157,14 @@ pub unsafe fn apply_frame() {
         if front.skin != base_skin_value {
             front.skin = base_skin_value;
             // SAFETY: per fn contract.
-            unsafe { stack.update(off.fns.character_data_stack_update, true); }
+            unsafe {
+                stack.update(off.fns.skin_apply.update, true);
+            }
         }
     }
 
     let config = state.config.lock().unwrap();
-    let player_team = player_ref.map(|p_ref| {
-        // SAFETY: per fn contract.
-        unsafe { p_ref.team() }
-    });
+    let player_team = player_ref.map(|p_ref| p_ref.team);
 
     for &minion_ref in minions {
         // SAFETY: per fn contract.
@@ -160,25 +175,32 @@ pub unsafe fn apply_frame() {
                 config.current_minion_skin_index * 2
             };
             // SAFETY: per fn contract.
-            unsafe { change_skin_for_object(off, minion_ref, skin); }
+            unsafe {
+                change_skin_for_object(off, minion_ref, skin);
+            }
             continue;
         }
 
         let hash = {
             // SAFETY: per fn contract.
-            let stack = unsafe { minion_ref.character_data_stack_ref(off.fields.character_data_stack) };
+            let stack =
+                unsafe { minion_ref.character_data_stack_ref(off.fields.character_data_stack) };
             // SAFETY: per fn contract.
             fnv1a(unsafe { stack.base_skin.model.as_str() })
         };
 
         // SAFETY: per fn contract.
-        let owner_ptr = unsafe { minion_ref.gold_redirect_target(off.fns.get_gold_redirect_target) };
+        let owner_ptr =
+            unsafe { minion_ref.gold_redirect_target(off.fns.get_gold_redirect_target) };
         if !owner_ptr.is_null() {
             // SAFETY: a non-null `gold_redirect_target` result is a live
             // `AIBaseCommon`, per that fn's contract.
             let owner_ref = unsafe { &*owner_ptr };
             // SAFETY: per fn contract.
-            let owner_skin = unsafe { owner_ref.character_data_stack_ref(off.fields.character_data_stack) }.base_skin.skin;
+            let owner_skin =
+                unsafe { owner_ref.character_data_stack_ref(off.fields.character_data_stack) }
+                    .base_skin
+                    .skin;
 
             let is_ward_like = hash == fnv1a("JammerDevice")
                 || hash == fnv1a("SightWard")
@@ -192,40 +214,56 @@ pub unsafe fn apply_frame() {
                 if is_local {
                     if hash == fnv1a("TestCubeRender10Vision") && player_hash == fnv1a("Yone") {
                         // SAFETY: per fn contract.
-                        unsafe { change_skin_for_object(off, minion_ref, owner_skin); }
+                        unsafe {
+                            change_skin_for_object(off, minion_ref, owner_skin);
+                        }
                     } else if hash == fnv1a("TestCubeRender10Vision") {
                         // SAFETY: per fn contract.
-                        unsafe { change_skin_for_object(off, minion_ref, 0); }
+                        unsafe {
+                            change_skin_for_object(off, minion_ref, 0);
+                        }
                     } else {
                         // SAFETY: per fn contract.
-                        unsafe { change_skin_for_object(off, minion_ref, config.current_ward_skin_index); }
+                        unsafe {
+                            change_skin_for_object(off, minion_ref, config.current_ward_skin_index);
+                        }
                     }
                 }
             } else if hash != fnv1a("SRU_Jungle_Companions") && hash != fnv1a("DominationScout") {
                 // SAFETY: per fn contract.
-                unsafe { change_skin_for_object(off, minion_ref, owner_skin); }
+                unsafe {
+                    change_skin_for_object(off, minion_ref, owner_skin);
+                }
             }
             continue;
         }
 
         if let Some(&idx) = config.current_combo_jungle_mob_skin_index.get(&hash)
-            && idx != 0 {
-                // SAFETY: per fn contract.
-                unsafe { change_skin_for_object(off, minion_ref, idx - 1); }
-                continue;
+            && idx != 0
+        {
+            // SAFETY: per fn contract.
+            unsafe {
+                change_skin_for_object(off, minion_ref, idx - 1);
             }
+            continue;
+        }
 
         if let Some(p_ref) = player_ref {
-            // Local-player-only companion skins (Nunu's snowball, Kindred's
-            // wolf, Quinn's Valor) follow the player's own chosen skin.
+            // Companion skins (Nunu snowball, Kindred wolf, Quinn Valor) follow
+            // the local player's skin.
             let matches = (hash == fnv1a("NunuSnowball") && player_hash == fnv1a("Nunu"))
                 || (hash == fnv1a("KindredWolf") && player_hash == fnv1a("Kindred"))
                 || (hash == fnv1a("QuinnValor") && player_hash == fnv1a("Quinn"));
             if matches {
                 // SAFETY: per fn contract.
-                let player_skin = unsafe { p_ref.character_data_stack_ref(off.fields.character_data_stack) }.base_skin.skin;
+                let player_skin =
+                    unsafe { p_ref.character_data_stack_ref(off.fields.character_data_stack) }
+                        .base_skin
+                        .skin;
                 // SAFETY: per fn contract.
-                unsafe { change_skin_for_object(off, minion_ref, player_skin); }
+                unsafe {
+                    change_skin_for_object(off, minion_ref, player_skin);
+                }
             }
         }
     }

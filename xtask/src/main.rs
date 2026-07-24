@@ -1,8 +1,8 @@
-//! `cargo xtask build [--release]` — builds the whole workspace and reports
-//! where the skin-changer DLL and the injector exe ended up.
+//! `cargo xtask build [--release]`: builds the workspace and reports where the
+//! DLL and injector exe ended up.
 //!
-//! `cargo xtask setup-ollvm` — downloads and links the obfuscation toolchain
-//! used by `build --obfuscate`; safe to run in CI or on a fresh machine.
+//! `cargo xtask setup-ollvm`: downloads and links the obfuscation toolchain for
+//! `build --obfuscate`; safe on CI or a fresh machine.
 
 mod cmd_build;
 mod cmd_setup_ollvm;
@@ -47,12 +47,10 @@ fn main() {
 }
 
 pub trait StreamingCommandExt {
-    /// Runs a `cargo --message-format=json` invocation to completion,
-    /// printing each `compiler-message`'s rendered text live as it arrives.
-    /// stderr is inherited so cargo's own "Compiling ..." progress reaches
-    /// the console in real time; stdout is piped since that's where
-    /// `--message-format=json` writes its one-JSON-object-per-line stream.
-    /// Returns every raw line for the caller to search for artifact paths.
+    /// Runs a `cargo --message-format=json` build to completion, printing each
+    /// `compiler-message`'s rendered text live. stderr is inherited (cargo's
+    /// progress); stdout is piped (the JSON stream). Returns every raw line for
+    /// the caller to search for artifact paths.
     fn run_rendering_cargo_json(&mut self) -> std::io::Result<Vec<String>>;
 }
 

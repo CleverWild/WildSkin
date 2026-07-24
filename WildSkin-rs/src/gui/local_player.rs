@@ -1,24 +1,20 @@
 //! The "Local Player" tab: the local champion's skin, gear, and ward combos.
 
 use super::widgets::{footer, skin_combo, string_combo};
-use crate::fnv::fnv1a;
 use crate::memory::ResolvedOffsets;
 use crate::sdk::ai_base_common::AIBaseCommon;
+use crate::util::fnv::fnv1a;
 use hudhook::imgui::Ui;
 use std::ffi::CString;
 
-/// Renders the local player's skin combo, the special-gear combo (only shown
-/// when the current skin has gear variants), and the ward-skin combo;
-/// applies each selection immediately via `change_skin`/`update` and
-/// persists it to the config file.
+/// Renders the local player's skin, special-gear (only when the skin has gear
+/// variants), and ward combos; applies each selection immediately and persists.
 pub(super) fn render_local_player_tab(ui: &Ui, off: &ResolvedOffsets, p_ref: &AIBaseCommon) {
     let state = crate::state::get();
     let mut config = state.config.lock().unwrap();
-    // SAFETY: `character_data_stack` is the correct offset resolved for this
-    // process.
+    // SAFETY: `character_data_stack` is the correct resolved offset.
     let stack = unsafe { p_ref.character_data_stack_ref(off.fields.character_data_stack) };
-    // SAFETY: `stack.base_skin.model` is a valid, initialized MSVC string on a
-    // live stack.
+    // SAFETY: `model` is a valid MSVC string on a live stack.
     let model = unsafe { stack.base_skin.model.as_str() };
     let (champ_hash, current_skin, live_model) =
         (fnv1a(model), stack.base_skin.skin, model.to_owned());
@@ -40,22 +36,19 @@ pub(super) fn render_local_player_tab(ui: &Ui, off: &ResolvedOffsets, p_ref: &AI
             && let Some(entry) = values.get((config.current_combo_skin_index - 1) as usize)
             && let Ok(c_model) = CString::new(entry.model_name.clone())
         {
-            // SAFETY: `p_ref` is live and `off`'s offsets/function addresses
-            // are correct for it.
+            // SAFETY: `p_ref` live, `off`'s offsets/addresses correct.
             unsafe {
                 p_ref.change_skin(
                     off.fields.character_data_stack,
                     off.fields.skin_id,
-                    off.fns.character_data_stack_push,
-                    off.fns.character_data_stack_update,
-                    off.fns.msvc_string_dtor,
+                    &off.fns.skin_apply,
                     &c_model,
                     entry.skin_id,
                     &state.database.special_skins,
                 );
             }
         }
-        config.save(&crate::config::config_dir(), Some(&live_model));
+        config.save(&crate::app::config::config_dir(), Some(&live_model));
     }
 
     if let Some(special) = state
@@ -65,18 +58,17 @@ pub(super) fn render_local_player_tab(ui: &Ui, off: &ResolvedOffsets, p_ref: &AI
         .find(|s| s.champ_hash == champ_hash)
         && let Some(gears) = special.gear_variants_for(current_skin)
     {
-        // SAFETY: `p_ref` is live and `character_data_stack` is the correct
-        // offset for it.
-        let mut gear = unsafe { p_ref.character_data_stack_ref(off.fields.character_data_stack) }.base_skin.gear as i32;
+        // SAFETY: `p_ref` live, `character_data_stack` correct.
+        let mut gear = unsafe { p_ref.character_data_stack_ref(off.fields.character_data_stack) }
+            .base_skin
+            .gear as i32;
         if string_combo(ui, "Current Gear", &mut gear, gears, false) {
-            // SAFETY: `p_ref` is live and `character_data_stack` is the
-            // correct offset for it.
+            // SAFETY: `p_ref` live, `character_data_stack` correct.
             let stack = unsafe { p_ref.character_data_stack_mut(off.fields.character_data_stack) };
             stack.base_skin.gear = gear as i8;
-            // SAFETY: `stack` is live and `character_data_stack_update` is the
-            // correct function address for it.
+            // SAFETY: `stack` live, update fn address correct.
             unsafe {
-                stack.update(off.fns.character_data_stack_update, true);
+                stack.update(off.fns.skin_apply.update, true);
             }
         }
         ui.separator();

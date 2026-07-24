@@ -1,7 +1,7 @@
-use crate::config::Config;
-use crate::logger::Logger;
+use crate::app::config::Config;
+use crate::app::logger::Logger;
+use crate::app::skin_database::SkinDatabase;
 use crate::memory::ResolvedOffsets;
-use crate::skin_database::SkinDatabase;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -19,9 +19,8 @@ impl AppState {
     }
 
     pub fn toggle_menu_open(&self) -> bool {
-        // Matches the original's `gui->is_open = !gui->is_open`, done
-        // atomically since the hotkey fires from the render-thread WndProc
-        // hook while other frames may read the flag concurrently.
+        // Atomic: the hotkey fires from the render-thread WndProc hook while
+        // other frames may read the flag concurrently.
         let mut current = self.menu_open.load(Ordering::Relaxed);
         loop {
             let new = !current;
@@ -63,11 +62,9 @@ mod tests {
     use super::*;
 
     fn dummy_offsets() -> ResolvedOffsets {
-        // ResolvedOffsets has no public constructor by design (Task 12 only
-        // builds it via resolve_all against real memory) — tests here use
-        // a zeroed transmute, valid only because every field is a plain
-        // usize and this test never dereferences through it.
-        unsafe { std::mem::zeroed() }
+        // ResolvedOffsets has no public constructor; tests use the cfg(test)
+        // dummy, which never dereferences globals or calls its fns.
+        ResolvedOffsets::dummy_for_test()
     }
 
     fn dummy_app_state() -> AppState {
@@ -82,8 +79,8 @@ mod tests {
 
     #[test]
     fn toggle_menu_open_flips_and_returns_the_new_state() {
-        // Exercised on a local instance — no dependency on the process-global
-        // singleton, so this test can't race the one below over it.
+        // Local instance, not the process-global singleton, so this can't
+        // race the test below.
         let state = dummy_app_state();
         let starting = state.is_menu_open();
         let after_toggle = state.toggle_menu_open();
@@ -93,10 +90,9 @@ mod tests {
 
     #[test]
     fn global_singleton_panics_before_init_then_returns_a_stable_instance_after() {
-        // A `OnceLock` can't be reset between tests, so a single test owns its
-        // whole lifecycle: `get()` panics before `init()`, and afterwards
-        // returns one stable instance. Splitting this across separate tests
-        // made them race on the shared global (order-dependent failures).
+        // A `OnceLock` can't be reset, so one test owns the whole lifecycle:
+        // panics before `init()`, stable instance after. Splitting caused
+        // order-dependent races on the shared global.
         let previous_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {})); // silence the expected-panic backtrace
         let before_init = std::panic::catch_unwind(get);

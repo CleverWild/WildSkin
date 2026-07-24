@@ -1,20 +1,13 @@
-//! Confirms that bytes at an *already-known* position still look as
-//! expected, as opposed to `resolve`'s job of finding a pattern's position
-//! in the first place.
+//! Confirms bytes at an already-known position still look as expected, unlike
+//! `resolve`'s job of finding a pattern's position.
 //!
-//! Deliberately doesn't reuse `aobscan` (which `resolve.rs` depends on for
-//! searching): `aobscan`'s single-threaded scan loop has a documented
-//! off-by-one that misses the final possible match position when the
-//! pattern's length equals the searched buffer's length exactly (see the
-//! "off-by-one" comment on `abi-verify-macro`'s `section_bytes` test
-//! helper). That's exactly the shape this module's callers tend to produce
-//! (a resolved function's own tail-trimmed bytes), so matching directly at a
-//! fixed start position sidesteps that bug entirely instead of working
-//! around it again.
+//! Deliberately doesn't reuse `aobscan`: its scan loop has an off-by-one that
+//! misses the final match position when pattern length equals buffer length
+//! (see the `section_bytes` test helper in `abi-verify-macro`). This module's
+//! callers hit exactly that shape, so matching at a fixed start sidesteps it.
 
-/// Parses an IDA-style AOB pattern (space-separated hex byte pairs, `?` or
-/// `??` for a wildcard byte) into a sequence of optional expected bytes.
-/// Returns `None` if any token isn't valid hex and isn't a wildcard.
+/// Parses an IDA-style AOB pattern (hex byte pairs, `?`/`??` = wildcard) into
+/// optional expected bytes. `None` if a token isn't hex and isn't a wildcard.
 fn parse_pattern(pattern: &str) -> Option<Vec<Option<u8>>> {
     pattern
         .split_whitespace()
@@ -26,18 +19,16 @@ fn parse_pattern(pattern: &str) -> Option<Vec<Option<u8>>> {
         .collect()
 }
 
-/// Byte slots `pattern` describes (wildcards included), `None` if malformed —
-/// lets a mismatch report quote back exactly that many real bytes.
+/// Byte slots `pattern` describes (wildcards included), `None` if malformed;
+/// lets a mismatch quote back exactly that many real bytes.
 #[must_use]
 pub fn token_count(pattern: &str) -> Option<usize> {
     parse_pattern(pattern).map(|expected| expected.len())
 }
 
-/// Checks whether `code` matches `pattern` starting at `code[0]` (wildcards
-/// match any byte). Returns:
-/// - `None` if `pattern` itself is malformed (see `parse_pattern`)
-/// - `Some(false)` if `pattern` is well-formed but `code` is shorter than it,
-///   or the bytes present don't match
+/// Whether `code` matches `pattern` at `code[0]` (wildcards match any byte):
+/// - `None` if `pattern` is malformed (see `parse_pattern`)
+/// - `Some(false)` if `code` is shorter than it, or bytes don't match
 /// - `Some(true)` if every non-wildcard byte matches
 #[must_use]
 pub fn matches_at_start(code: &[u8], pattern: &str) -> Option<bool> {
@@ -45,7 +36,12 @@ pub fn matches_at_start(code: &[u8], pattern: &str) -> Option<bool> {
     if code.len() < expected.len() {
         return Some(false);
     }
-    Some(expected.iter().zip(code).all(|(&want, &got)| want.is_none_or(|w| w == got)))
+    Some(
+        expected
+            .iter()
+            .zip(code)
+            .all(|(&want, &got)| want.is_none_or(|w| w == got)),
+    )
 }
 
 #[cfg(test)]
@@ -54,18 +50,27 @@ mod tests {
 
     #[test]
     fn exact_match_no_wildcards() {
-        assert_eq!(matches_at_start(&[0xAA, 0xBB, 0xCC], "AA BB CC"), Some(true));
+        assert_eq!(
+            matches_at_start(&[0xAA, 0xBB, 0xCC], "AA BB CC"),
+            Some(true)
+        );
     }
 
     #[test]
     fn wildcards_in_the_middle_match_any_byte() {
         assert_eq!(matches_at_start(&[0xAA, 0x00, 0xCC], "AA ? CC"), Some(true));
-        assert_eq!(matches_at_start(&[0xAA, 0xFF, 0xCC], "AA ?? CC"), Some(true));
+        assert_eq!(
+            matches_at_start(&[0xAA, 0xFF, 0xCC], "AA ?? CC"),
+            Some(true)
+        );
     }
 
     #[test]
     fn one_byte_mismatch_fails() {
-        assert_eq!(matches_at_start(&[0xAA, 0xBB, 0xCC], "AA BB CD"), Some(false));
+        assert_eq!(
+            matches_at_start(&[0xAA, 0xBB, 0xCC], "AA BB CD"),
+            Some(false)
+        );
     }
 
     #[test]
@@ -86,15 +91,17 @@ mod tests {
 
     #[test]
     fn empty_pattern_matches_trivially() {
-        // A pattern with zero expected bytes is vacuously satisfied by any
-        // `code`, including empty `code` — pinned down explicitly since
-        // it's an edge case worth being deliberate about.
+        // Zero expected bytes is vacuously satisfied by any `code`, empty
+        // included; pinned as a deliberate edge case.
         assert_eq!(matches_at_start(&[], ""), Some(true));
         assert_eq!(matches_at_start(&[0xAA, 0xBB], ""), Some(true));
     }
 
     #[test]
     fn code_longer_than_pattern_still_matches_at_start() {
-        assert_eq!(matches_at_start(&[0xAA, 0xBB, 0xCC, 0xDD], "AA BB"), Some(true));
+        assert_eq!(
+            matches_at_start(&[0xAA, 0xBB, 0xCC, 0xDD], "AA BB"),
+            Some(true)
+        );
     }
 }

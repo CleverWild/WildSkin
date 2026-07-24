@@ -1,12 +1,8 @@
-//! Vendored from the `offsetter` crate (MIT, v1.1.1,
-//! <https://crates.io/crates/offsetter>) rather than kept as a dependency —
-//! it's a single small `macro_rules!`, not worth a crate plus its own `paste`
-//! dependency.
+//! Vendored from the `offsetter` crate (MIT, v1.1.1): a single small
+//! `macro_rules!`, not worth a crate plus its `paste` dependency.
 //!
-//! Defines a `#[repr(C)]` struct with automatic `_pad<field>: [u8; N]`
-//! fields inserted between named fields so each one lands at an explicit
-//! byte offset — see `sdk::character_data`/`sdk::champion`/`sdk::game_state`
-//! for real usage:
+//! Defines a `#[repr(C)]` struct with auto `_pad<field>` bytes between named
+//! fields so each lands at an explicit byte offset:
 //!
 //! ```ignore
 //! offset!(
@@ -17,23 +13,17 @@
 //! );
 //! ```
 //!
-//! The `OFFSET =>` form (rather than the original crate's bare
-//! `OFFSET field: Type`) is for tooling: rustfmt/rust-analyzer can't format
-//! or highlight a number directly followed by an identifier, but they handle
-//! the match-arm-shaped `OFFSET => field: Type` fine.
+//! The `OFFSET =>` form (vs the crate's bare `OFFSET field: Type`) is for
+//! tooling: rustfmt/rust-analyzer choke on a number directly before an ident.
 //!
-//! Single-bound (`<T>`, `<T, U>`, ...) generic structs are supported (see
+//! Single-bound generic structs are supported (see
 //! `sdk::primitives::ManagerTemplate`), with two differences:
 //!
-//! - `size_of::<Ty>()` can't appear in the generated padding computation when
-//!   `Ty` depends on a generic parameter ("generic parameters may not be used
-//!   in const operations"; `generic_const_exprs` would lift this but is
-//!   unstable). Raw-pointer fields are auto-detected and sidestep it — every
-//!   pointer is `size_of::<usize>()` regardless of pointee. Any other
-//!   generic-dependent field (none exist here today) needs an explicit
-//!   `= SIZE_EXPR` annotation (`0x8 => list: SomeGenericThing<T> = 16,`).
-//! - The per-field alignment assertion is skipped for every field — same
-//!   reason, and one per-struct rule beats tracking which fields need it.
+//! - `size_of::<Ty>()` can't appear in padding computation when `Ty` is
+//!   generic-dependent (needs unstable `generic_const_exprs`). Raw-pointer
+//!   fields are auto-detected (every pointer is `size_of::<usize>()`); any
+//!   other generic-dependent field needs an explicit `= SIZE_EXPR`.
+//! - Per-field alignment assertion is skipped for every field, same reason.
 
 #[macro_export]
 macro_rules! offset {
@@ -73,9 +63,8 @@ macro_rules! offset {
         $crate::offset!(@guard (0, $($input)*) -> {$(#[$attr])* $vis struct $name});
     };
 
-    // Generic-struct variants: identical offset/padding mechanics on a
-    // separate `@guardgen` tag, so the non-generic path above stays
-    // untouched. Only difference: no per-field alignment assertion.
+    // Generic-struct variants on a separate `@guardgen` tag. Only difference
+    // from the non-generic path: no per-field alignment assertion.
     (@guardgen ($current_offset:expr,) -> {$(#[$attr:meta])* $vis:vis struct $name:ident<$($gen:ident),+> $(($amount:expr, $fvis:vis $id:ident: $ty:ty))*}) => {
         ::paste::paste! {
             #[repr(C)]
@@ -89,9 +78,8 @@ macro_rules! offset {
         }
     };
 
-    // Auto-detected raw-pointer fields, matched by literal `*`/`mut`/`const`
-    // tokens ahead of the `= $size:expr` arms below, so a pointer-typed field
-    // never needs a size annotation — every pointer is `size_of::<usize>()`.
+    // Raw-pointer fields, matched before the `= $size:expr` arms so a pointer
+    // field never needs a size annotation: every pointer is `size_of::<usize>()`.
     (@guardgen ($current_offset:expr, $offset:literal => $fvis:vis $id:ident: * mut $pointee:ty, $($next:tt)*) -> {$($output:tt)*}) => {
         $crate::offset!(@guardgen ($offset + core::mem::size_of::<usize>(), $($next)*) -> {$($output)* ($offset - ($current_offset), $fvis $id: *mut $pointee)});
     };
@@ -113,10 +101,8 @@ macro_rules! offset {
         $crate::offset!(@guardgen ($offset + $size,) -> {$($output)* ($offset - ($current_offset), $fvis $id: $ty)});
     };
 
-    // Fallback for a field whose type doesn't mention the generic parameter
-    // (tried last, so the arms above always win when they apply): infers the
-    // size via `size_of::<$ty>()`, fine precisely because `$ty` isn't
-    // generic-dependent.
+    // Fallback (tried last) for a field whose type isn't generic-dependent:
+    // infers size via `size_of::<$ty>()`.
     (@guardgen ($current_offset:expr, $offset:literal => $fvis:vis $id:ident: $ty:ty, $($next:tt)*) -> {$($output:tt)*}) => {
         $crate::offset!(@guardgen ($offset + core::mem::size_of::<$ty>(), $($next)*) -> {$($output)* ($offset - ($current_offset), $fvis $id: $ty)});
     };
@@ -127,5 +113,49 @@ macro_rules! offset {
 
     ($(#[$attr:meta])* $vis:vis struct $name:ident<$($gen:ident),+> { $($input:tt)* }) => {
         $crate::offset!(@guardgen (0, $($input)*) -> {$(#[$attr])* $vis struct $name<$($gen),+>});
+    };
+
+    // Vtable-method extension: `struct {..} vtable { SLOT => vis fn ..; }`
+    // generates the struct plus typed virtual-call wrappers. Vtable pointer is
+    // read from offset 0 (C++ polymorphic layout), so no `vtable` field needed.
+    // NOTE: a slot index has no AOB to `verify_abi` against, so unlike byte
+    // offsets it can silently drift between patches; document that per method.
+    (
+        $(#[$attr:meta])* $vis:vis struct $name:ident { $($fields:tt)* }
+        vtable { $($methods:tt)* }
+    ) => {
+        $crate::offset!($(#[$attr])* $vis struct $name { $($fields)* });
+        impl $name {
+            $crate::offset!(@vtable $($methods)*);
+        }
+    };
+
+    (@vtable) => {};
+    (@vtable
+        $(#[$mattr:meta])*
+        $slot:literal => $mvis:vis fn $mname:ident(&self $(, $arg:ident: $argty:ty)*) -> $ret:ty;
+        $($rest:tt)*
+    ) => {
+        $(#[$mattr])*
+        /// # Safety
+        /// Caller guarantees `self` is a live object whose vtable (at offset 0)
+        /// has this slot populated with a matching `unsafe extern "system"` fn.
+        #[allow(
+            clippy::undocumented_unsafe_blocks,
+            clippy::multiple_unsafe_ops_per_block,
+            clippy::macro_metavars_in_unsafe,
+            reason = "generated vtable dispatch: one logical unsafe operation (an indirect virtual call); its contract is the # Safety doc. The only metavars in the unsafe block are the slot literal and this method's own already-evaluated parameters, not caller expressions injected into unsafe"
+        )]
+        $mvis unsafe fn $mname(&self $(, $arg: $argty)*) -> $ret {
+            let this = core::ptr::from_ref::<Self>(self);
+            unsafe {
+                let vtable = *this.cast::<*const usize>();
+                let func_ptr = *vtable.add($slot);
+                let func: unsafe extern "system" fn(usize $(, $argty)*) -> $ret =
+                    core::mem::transmute(func_ptr);
+                func(this as usize $(, $arg)*)
+            }
+        }
+        $crate::offset!(@vtable $($rest)*);
     };
 }

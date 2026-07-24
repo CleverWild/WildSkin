@@ -64,20 +64,36 @@ mod tests {
     #[test]
     fn astring_reads_through_the_pointer() {
         let backing = CString::new("Ahri").unwrap();
-        let a = AString { ptr: backing.as_ptr(), length: 4, capacity: 4 };
-        unsafe { assert_eq!(a.as_str(), "Ahri"); }
+        let a = AString {
+            ptr: backing.as_ptr(),
+            length: 4,
+            capacity: 4,
+        };
+        unsafe {
+            assert_eq!(a.as_str(), "Ahri");
+        }
     }
 
     #[test]
     fn astring_null_pointer_is_empty_not_a_crash() {
-        let a = AString { ptr: std::ptr::null(), length: 0, capacity: 0 };
-        unsafe { assert_eq!(a.as_str(), ""); }
+        let a = AString {
+            ptr: std::ptr::null(),
+            length: 0,
+            capacity: 0,
+        };
+        unsafe {
+            assert_eq!(a.as_str(), "");
+        }
     }
 
     #[test]
     fn riot_array_reads_backing_slice() {
         let mut backing = [1i32, 2, 3];
-        let arr = RiotArray { list: backing.as_mut_ptr(), size: 3, cap: 3 };
+        let arr = RiotArray {
+            list: backing.as_mut_ptr(),
+            size: 3,
+            cap: 3,
+        };
         unsafe { assert_eq!(arr.as_slice(), &[1, 2, 3]) };
     }
 
@@ -96,6 +112,9 @@ mod tests {
         };
         let slice = unsafe { mt.as_slice() };
         assert_eq!(slice.len(), 2);
-        unsafe { assert_eq!(*slice[0], 10); assert_eq!(*slice[1], 20); }
+        unsafe {
+            assert_eq!(*slice[0], 10);
+            assert_eq!(*slice[1], 20);
+        }
     }
 }

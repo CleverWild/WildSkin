@@ -1,8 +1,6 @@
 pub fn derive_key() -> u32 {
-    // Matches the original: xor_key's bytes are the low bytes of one
-    // __rdtsc() reading (sizeof(int32_t)=4 never needs a second reading).
-    // SAFETY: `_rdtsc` is safe to call unconditionally on any x86_64 CPU;
-    // it just reads the timestamp counter register.
+    // xor_key is the low 4 bytes of one __rdtsc() reading.
+    // SAFETY: `_rdtsc` is always safe on x86_64; it reads the TSC register.
     unsafe { core::arch::x86_64::_rdtsc() as u32 }
 }
 

@@ -1,8 +1,8 @@
 //! Shared imgui widgets used across the menu tabs: the two skin combo boxes,
 //! the centered footer, and the click-to-rebind hotkey widget.
 
-use crate::keybind::KeyBind;
-use crate::skin_database::SkinInfo;
+use crate::app::keybind::KeyBind;
+use crate::app::skin_database::SkinInfo;
 use hudhook::imgui::Ui;
 
 /// Combo box over a champion's skin list, with a leading "Default" entry at
@@ -21,11 +21,9 @@ pub(super) fn skin_combo(ui: &Ui, label: &str, current: &mut i32, values: &[Skin
     changed
 }
 
-/// Combo box over a plain string list (skin names come pre-formatted from
-/// `SkinDatabase` for minions/turrets/jungle mobs, unlike `skin_combo`'s
-/// `SkinInfo` slice). `with_default_prefix` controls whether a "Default"
-/// entry is prepended at index 0. Returns `true` the frame the selection
-/// changes.
+/// Combo box over a plain string list (pre-formatted names, unlike
+/// `skin_combo`'s `SkinInfo` slice). `with_default_prefix` prepends a "Default"
+/// entry at index 0. Returns `true` the frame the selection changes.
 pub(super) fn string_combo(
     ui: &Ui,
     label: &str,
@@ -52,11 +50,8 @@ pub(super) fn string_combo(
 pub(super) fn footer(ui: &Ui) {
     ui.separator();
     let build_text = format!("Last Build: {} - {}", env!("CARGO_PKG_VERSION"), "");
-    // NOTE: original shows compiler-provided __DATE__/__TIME__; Rust has no
-    // direct equivalent without a build.rs timestamp — this substitutes the
-    // crate version, a deliberate, smaller change flagged here rather than
-    // adding a build-script dependency just to reproduce a build timestamp
-    // string with no functional effect on the tool itself.
+    // NOTE: original shows __DATE__/__TIME__; Rust has no equivalent without a
+    // build.rs timestamp, so substitute the crate version.
     let text_width = ui.calc_text_size(&build_text)[0];
     ui.set_cursor_pos([(ui.window_size()[0] - text_width) / 2.0, ui.cursor_pos()[1]]);
     ui.text(&build_text);
@@ -66,27 +61,20 @@ pub(super) fn footer(ui: &Ui) {
     ui.text(copyright);
 }
 
-/// Tracks which hotkey widget (if any) is currently "armed" waiting for a
-/// keypress. The original does this via `ImGui`'s own active-widget-id
-/// machinery (`GetActiveID`/`SetActiveID`/`ClearActiveID`); imgui-rs doesn't
-/// cleanly expose those internals, so this port uses a small Rust-side
-/// capture flag instead — same observable behavior (click to arm, press a
-/// key to bind, click again to cancel), without depending on raw `ImGui`
-/// internals Step 4 would otherwise have to chase down.
+/// Which hotkey widget is currently armed for a keypress. imgui-rs doesn't
+/// expose ImGui's active-widget-id internals, so use a Rust-side capture flag:
+/// same behavior (click to arm, press to bind, click to cancel).
 static CAPTURING_HOTKEY: std::sync::Mutex<Option<&'static str>> = std::sync::Mutex::new(None);
 
-/// Click-to-rebind hotkey button: shows the bound key's name, and on click
-/// arms capture mode (see `CAPTURING_HOTKEY`) until the next keypress binds
-/// `key` or the button is clicked again to cancel.
+/// Click-to-rebind hotkey button: shows the bound key, arms capture on click
+/// (see `CAPTURING_HOTKEY`) until a keypress binds `key` or a click cancels.
 pub(super) fn hotkey_widget(ui: &Ui, label: &'static str, key: &mut KeyBind) {
     ui.text(label);
     ui.same_line();
     let mut capturing = CAPTURING_HOTKEY.lock().unwrap();
     if *capturing == Some(label) {
-        // Short-circuits exactly like the previous if/else-if: if the
-        // cancel button is clicked this frame, `set_to_pressed_key` (which
-        // has the side effect of binding `key`) is never called, same as
-        // before.
+        // `||` short-circuits: if the cancel button is clicked, the binding
+        // side effect of `set_to_pressed_key` is skipped.
         if ui.button_with_size("...", [100.0, 0.0]) || key.set_to_pressed_key(ui) {
             *capturing = None;
         }

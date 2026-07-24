@@ -1,24 +1,35 @@
-// The in-game logger: the GUI "Logger" tab already displays `lines()`, but
-// no code emits log lines yet, so `add_log`/`clear`/`auto_scroll` read as
-// dead until the logging call sites are wired up. Kept (and unit-tested) so
-// that wiring is a one-liner at each future log point.
+// In-game logger. The GUI Logger tab displays `lines()`, but nothing emits
+// log lines yet, so `add_log`/`clear`/`auto_scroll` read as dead until the
+// call sites are wired up.
 pub struct Logger {
     lines: Vec<String>,
-    #[expect(dead_code, reason = "GUI auto-scroll toggle for the Logger tab, not wired yet — see comment above")]
+    #[expect(
+        dead_code,
+        reason = "GUI auto-scroll toggle for the Logger tab, not wired yet, see comment above"
+    )]
     pub auto_scroll: bool,
 }
 
 impl Logger {
     pub const fn new() -> Self {
-        Self { lines: Vec::new(), auto_scroll: true }
+        Self {
+            lines: Vec::new(),
+            auto_scroll: true,
+        }
     }
 
-    #[allow(dead_code, reason = "logging entry point, not wired at call sites yet but exercised by unit tests — see comment above")]
+    #[allow(
+        dead_code,
+        reason = "logging entry point, not wired at call sites yet but exercised by unit tests, see comment above"
+    )]
     pub fn add_log(&mut self, line: impl AsRef<str>) {
         self.lines.push(line.as_ref().to_owned());
     }
 
-    #[allow(dead_code, reason = "logging entry point, not wired at call sites yet but exercised by unit tests — see comment above")]
+    #[allow(
+        dead_code,
+        reason = "logging entry point, not wired at call sites yet but exercised by unit tests, see comment above"
+    )]
     pub fn clear(&mut self) {
         self.lines.clear();
     }

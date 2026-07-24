@@ -5,42 +5,36 @@ use crate::memory::ResolvedOffsets;
 use crate::sdk::ai_base_common::AIBaseCommon;
 use hudhook::imgui::Ui;
 
-/// Applies `skin_id` to every live turret on `team`. Turret skins come in
-/// ally/enemy pairs (`skin_id * 2` vs. `skin_id * 2 + 1`), so `player_team`
-/// decides which half of the pair each turret gets, independent of `team`
-/// itself.
+/// Applies `skin_id` to every turret on `team`. Skins are ally/enemy pairs
+/// (`skin_id*2` vs `skin_id*2+1`); `player_team` picks which half.
 fn change_turret_skin(off: &ResolvedOffsets, skin_id: i32, team: i8, player_team: i8) {
     if skin_id == -1 {
         return;
     }
-    // SAFETY: caller (the render loop) only calls this while the game is
-    // `Running`, so the turret list is live.
+    // SAFETY: called only while the game is `Running`, so the turret list is live.
     let turrets = unsafe { off.turret_list() };
     for &turret_ref in turrets {
-        // SAFETY: `turret_ref` is live.
-        if unsafe { turret_ref.team() } == team {
+        if turret_ref.team == team {
             let final_skin = if player_team == team {
                 skin_id * 2
             } else {
                 skin_id * 2 + 1
             };
-            // SAFETY: `turret_ref` is live and `character_data_stack`
-            // is the correct offset for it.
-            let stack = unsafe { turret_ref.character_data_stack_mut(off.fields.character_data_stack) };
+            // SAFETY: `turret_ref` live, `character_data_stack` correct.
+            let stack =
+                unsafe { turret_ref.character_data_stack_mut(off.fields.character_data_stack) };
             stack.base_skin.skin = final_skin;
-            // SAFETY: `stack` is live and `character_data_stack_update`
-            // is the correct function address for it.
+            // SAFETY: `stack` live, update fn address correct.
             unsafe {
-                stack.update(off.fns.character_data_stack_update, true);
+                stack.update(off.fns.skin_apply.update, true);
             }
         }
     }
 }
 
-/// Renders the minion/turret/jungle-mob skin combos. Minion and jungle-mob
-/// selections just update config (picked up by `skin_logic::apply_frame`
-/// every frame, since those objects can respawn); turret selections apply
-/// immediately via `change_turret_skin` since turrets don't respawn.
+/// Renders the minion/turret/jungle-mob combos. Minion/jungle-mob just update
+/// config (`apply_frame` reapplies each frame since they respawn); turrets
+/// apply immediately since they don't respawn.
 pub(super) fn render_global_skins_tab(
     ui: &Ui,
     off: &ResolvedOffsets,
@@ -61,10 +55,7 @@ pub(super) fn render_global_skins_tab(
     }
     ui.separator();
 
-    let player_team = player.map_or(1, |p_ref| {
-        // SAFETY: `p_ref` is live, per the caller's `off.player_ref()` contract.
-        unsafe { p_ref.team() }
-    });
+    let player_team = player.map_or(1, |p_ref| p_ref.team);
     if string_combo(
         ui,
         "Order Turret Skins:",

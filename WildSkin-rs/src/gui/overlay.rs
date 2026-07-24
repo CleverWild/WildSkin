@@ -1,25 +1,23 @@
-//! Ports `Hooks.cpp`'s `init_imgui` (style + font setup) and `wndProc`'s
-//! per-frame render/hotkey dispatch into `hudhook`'s `ImguiRenderLoop`.
+//! Ports `Hooks.cpp`'s `init_imgui` (style/font) and `wndProc` render/hotkey
+//! dispatch into `hudhook`'s `ImguiRenderLoop`.
 //!
-//! `initialize()` does ONLY style/font setup: it runs on the first rendered
-//! frame, but `state::get()` is valid only after the startup sequence (memory
-//! scan, config load, `state::init()`) has completed, and `SkinDatabase::load()`
-//! must finish before the database lands in the immutable `AppState`.
+//! `initialize()` does ONLY style/font setup: it runs on the first frame, but
+//! `state::get()` is valid only after the startup sequence (scan, config load,
+//! `state::init()`) completes.
 use hudhook::imgui::{Context, FontConfig, FontSource, Ui};
 use hudhook::windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use hudhook::{ImguiRenderLoop, RenderContext};
 
 pub struct Overlay;
 
-/// Undoes hudhook's DX11 double-DPI-scale bug (see the call site) by
-/// resetting `io.display_framebuffer_scale` to `[1.0, 1.0]`.
+/// Undoes hudhook's DX11 double-DPI-scale bug (see call site) by resetting
+/// `io.display_framebuffer_scale` to `[1.0, 1.0]`.
 ///
-/// Takes `&Ui` purely as a witness that an imgui context is live: `Ui` only
-/// exists for the duration of a render callback, so borrowing one ties
-/// `igGetIO()`'s pointer validity to the type system rather than a comment.
+/// Takes `&Ui` as a witness that an imgui context is live, tying `igGetIO()`'s
+/// validity to the type system.
 fn reset_display_framebuffer_scale(_ui: &Ui) {
-    // SAFETY: `igGetIO()` returns imgui's single global IO struct, valid for
-    // the current context's lifetime — which `_ui` proves is live.
+    // SAFETY: `igGetIO()` returns imgui's global IO struct, valid for the
+    // context's lifetime, which `_ui` proves is live.
     let io_raw = unsafe { hudhook::imgui::sys::igGetIO() };
     // SAFETY: `io_raw` was just resolved above and is not stored past this call.
     unsafe {
@@ -109,17 +107,16 @@ fn apply_style(ctx: &mut Context) {
     io.config_flags |= hudhook::imgui::ConfigFlags::NO_MOUSE_CURSOR_CHANGE;
 }
 
-// Glyph ranges transcribed from Hooks.cpp's tahomaRanges — pairs are
-// [start, end] inclusive, matching ImGui's own ImWchar range-array format.
+// Glyph ranges from Hooks.cpp's tahomaRanges: [start, end] inclusive pairs,
+// ImGui ImWchar format.
 const TAHOMA_RANGES: &[u32] = &[
     0x0020, 0x00FF, 0x0100, 0x024F, 0x0250, 0x02FF, 0x0300, 0x03FF, 0x0400, 0x052F, 0x0530, 0x06FF,
     0x0E00, 0x0E7F, 0x1E00, 0x1FFF, 0x2000, 0x20CF, 0x2100, 0x218F, 0,
 ];
 
 fn load_fonts(ctx: &mut Context) {
-    // `dirs::font_dir()` only resolves on macOS (always `None` on Windows),
-    // so it can't be used here — `%windir%\Fonts` is the real system fonts
-    // folder and that environment variable is always set on Windows.
+    // `dirs::font_dir()` is `None` on Windows, so use `%windir%\Fonts` (env var
+    // always set).
     let Some(fonts_dir) =
         std::env::var_os("windir").map(|windir| std::path::PathBuf::from(windir).join("Fonts"))
     else {
@@ -136,12 +133,9 @@ fn load_fonts(ctx: &mut Context) {
     let malgun_bytes = std::fs::read(&malgun).ok();
     let msyh_bytes = std::fs::read(&msyh).ok();
 
-    // `FontAtlas::add_font` treats every source after the first in the same
-    // call as merge-mode automatically (imgui-rs has no standalone
-    // `merge_mode` field on `FontConfig` — merging is positional, not
-    // configured per-source), so tahoma/malgun/msyh must go in a single
-    // `add_font` call, mirroring the original's one `AddFont` + two
-    // `mergeMode` follow-ups onto the same font slot.
+    // `add_font` merges every source after the first automatically (imgui-rs
+    // has no `merge_mode` field; merging is positional), so tahoma/malgun/msyh
+    // must go in one call.
     let mut sources = vec![FontSource::TtfData {
         data: &tahoma_bytes,
         size_pixels: 15.0,
@@ -181,24 +175,21 @@ impl ImguiRenderLoop for Overlay {
 
     fn render(&mut self, ui: &mut Ui) {
         let state = crate::state::get();
-        // SAFETY: only reads a running-state flag from already-resolved
-        // offsets; no game memory is dereferenced by this check itself.
+        // SAFETY: reads a running-state flag from resolved offsets; no game
+        // memory dereferenced here.
         if !unsafe { state.offsets.is_running() } {
             return;
         }
-        // SAFETY: game is confirmed `Running` above, so the hero/minion
-        // lists and player pointer `apply_frame` walks are live.
+        // SAFETY: game confirmed `Running` above, so the lists/pointers
+        // `apply_frame` walks are live.
         unsafe {
             crate::skin_logic::apply_frame();
         }
 
-        // hudhook 0.9.1 double-counts DPI scale on the DX11 backend: it sets
-        // `io.display_size` to the swap chain's true pixel dimensions AND
-        // `io.display_framebuffer_scale` from `GetDpiForWindow`, then the
-        // render backend multiplies the two when sizing the render target —
-        // breaking rendering at 125%/150% Windows scaling. Must run every
-        // frame: hudhook recomputes the scale on every resize/Present-recreate,
-        // so a one-time fix in `initialize` wouldn't stick.
+        // hudhook 0.9.1 double-counts DPI on DX11: sets `io.display_size` to
+        // true pixels AND `display_framebuffer_scale` from `GetDpiForWindow`,
+        // then multiplies the two, breaking 125%/150% scaling. Must run every
+        // frame: hudhook recomputes on each resize/Present-recreate.
         reset_display_framebuffer_scale(ui);
 
         if state.is_menu_open() {
@@ -209,9 +200,8 @@ impl ImguiRenderLoop for Overlay {
     fn after_wnd_proc(&self, _hwnd: HWND, umsg: u32, wparam: WPARAM, _lparam: LPARAM) {
         const WM_KEYDOWN: u32 = 0x0100;
         if umsg == WM_KEYDOWN {
-            // SAFETY: `after_wnd_proc` means imgui has already seen this
-            // message; `state::get()` is initialized before any WndProc hook
-            // is reachable.
+            // SAFETY: `state::get()` is initialized before any WndProc hook is
+            // reachable.
             unsafe {
                 crate::skin_logic::handle_keydown(wparam.0 as i32);
             }

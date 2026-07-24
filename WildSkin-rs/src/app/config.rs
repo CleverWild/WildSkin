@@ -1,10 +1,10 @@
-use crate::keybind::KeyBind;
+use crate::app::keybind::KeyBind;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 #[allow(
     clippy::struct_excessive_bools,
-    reason = "independent user-facing settings, not a state machine — a bitflags/enum refactor would hurt readability here without a real correctness benefit"
+    reason = "independent user-facing settings, not a state machine; a bitflags/enum refactor would hurt readability here without a real correctness benefit"
 )]
 pub struct Config {
     pub menu_key: KeyBind,
@@ -30,9 +30,9 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            menu_key: KeyBind::new(crate::keybind::KeyCode::Insert),
-            next_skin_key: KeyBind::new(crate::keybind::KeyCode::PageUp),
-            previous_skin_key: KeyBind::new(crate::keybind::KeyCode::PageDown),
+            menu_key: KeyBind::new(crate::app::keybind::KeyCode::Insert),
+            next_skin_key: KeyBind::new(crate::app::keybind::KeyCode::PageUp),
+            previous_skin_key: KeyBind::new(crate::app::keybind::KeyCode::PageDown),
             rainbow_text: false,
             font_scale: 1.0,
             hero_name: true,
@@ -218,7 +218,7 @@ impl Config {
     )]
     pub fn reset(&mut self) {
         *self = Self::default();
-        self.rainbow_text = true; // original's reset() sets true, unlike its own Default (false) — preserved as-is
+        self.rainbow_text = true; // reset() sets true, unlike Default (false)
     }
 }
 
@@ -309,8 +309,8 @@ mod tests {
             "Zed's own key must be present: {raw}"
         );
 
-        // A save with no current player model (e.g. "Other Champs" tab / Random
-        // Skins) must not wipe the previously saved per-champion keys either.
+        // A save with no current player model (Other Champs tab / Random
+        // Skins) must not wipe the per-champion keys either.
         Config::default().save(&dir, None);
         let raw = std::fs::read_to_string(dir.join("WildSkin64")).unwrap();
         assert!(

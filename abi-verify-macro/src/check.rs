@@ -1,17 +1,11 @@
 //! Plain, unit-testable core logic behind `#[verify_abi]`.
 //!
-//! Deliberately has nothing to do with proc-macro machinery (no `syn` /
-//! `proc_macro2` types anywhere in this file) so it can be exercised with
-//! ordinary `#[test]` functions instead of heavyweight tools like `trybuild`.
+//! Deliberately free of proc-macro machinery (no `syn`/`proc_macro2`) so it can
+//! be exercised with ordinary `#[test]`s, not `trybuild`.
 //!
-//! Note on the `exe_path` parameter: the brief this was built from originally
-//! had `check_abi` read the env var itself (`exe_path_env_var: &str`). That
-//! was changed to accept the already-resolved path as `Option<&Path>`
-//! instead, with the proc-macro wrapper in `lib.rs` doing the
-//! `std::env::var` lookup. Reading env vars from within unit tests is
-//! flaky (env vars are process-global, so parallel tests mutating them can
-//! race each other); resolving the path in the wrapper and passing it down
-//! removes that mutation from tests entirely, per option (c) in the brief.
+//! `exe_path` is passed in as `Option<&Path>` (resolved by the `lib.rs`
+//! wrapper) rather than env-read here: env vars are process-global, so
+//! env-reading tests race each other.
 
 use abi_verify::arg_count::RecoveredArgCount;
 use abi_verify::resolve::ResolveError;
@@ -19,22 +13,28 @@ use abi_verify::{DISABLED_ENV_VAR, EXE_PATH_ENV_VAR};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-/// One-entry `.text` cache: without it every annotated item re-reads the same
-/// ~27 MB section. One entry is enough — every item in a compilation resolves
-/// the same path.
+/// One-entry `.text` cache: else every annotated item re-reads the same ~27 MB
+/// section. One entry suffices; every item resolves the same path.
 static TEXT_CACHE: Mutex<Option<(PathBuf, Arc<[u8]>)>> = Mutex::new(None);
 
 fn text_section(exe_path: &Path) -> Result<Arc<[u8]>, String> {
-    let hit = TEXT_CACHE
-        .lock()
-        .ok()
-        .and_then(|cache| cache.as_ref().filter(|(path, _)| path == exe_path).map(|(_, text)| Arc::clone(text)));
+    let hit = TEXT_CACHE.lock().ok().and_then(|cache| {
+        cache
+            .as_ref()
+            .filter(|(path, _)| path == exe_path)
+            .map(|(_, text)| Arc::clone(text))
+    });
     if let Some(text) = hit {
         return Ok(text);
     }
 
     let text: Arc<[u8]> = abi_verify::pe::read_text_section(exe_path)
-        .map_err(|error| format!("abi-verify: failed to read .text section from {}: {error}", exe_path.display()))?
+        .map_err(|error| {
+            format!(
+                "abi-verify: failed to read .text section from {}: {error}",
+                exe_path.display()
+            )
+        })?
         .into();
     if let Ok(mut cache) = TEXT_CACHE.lock() {
         *cache = Some((exe_path.to_path_buf(), Arc::clone(&text)));
@@ -68,9 +68,8 @@ fn resolve_offset(args: &AbiCheckArgs<'_>, text: &[u8]) -> Result<usize, String>
     })
 }
 
-/// Resolves the exe path to its `.text` section. `Ok(None)` = no exe
-/// configured, so every check is skipped; `Err` = a path was given but isn't
-/// usable, which is loud (setting the var at all implies meaning it).
+/// Resolves the exe path to its `.text`. `Ok(None)` = no exe configured (skip
+/// all checks); `Err` = a path was given but is unusable (loud on purpose).
 fn resolve_text(exe_path: Option<&Path>) -> Result<Option<Arc<[u8]>>, String> {
     let Some(exe_path) = exe_path else {
         return Ok(None);
@@ -86,14 +85,12 @@ fn resolve_text(exe_path: Option<&Path>) -> Result<Option<Arc<[u8]>>, String> {
     text_section(exe_path).map(Some)
 }
 
-/// Runs every exe-dependent check for one annotated item, returning one
-/// message per failure so a single failing check can't mask another.
+/// Runs every exe-dependent check for one item, one message per failure so
+/// one can't mask another.
 ///
-/// The `.text` read, the pattern resolution and the disassembly happen once
-/// and feed all three comparisons, which are themselves pure functions over
-/// the resolved bytes (and unit-tested as such). A failure to get that far —
-/// no exe, unreadable exe, unresolvable pattern — is a single message, since
-/// none of the comparisons can run at all.
+/// The `.text` read, pattern resolution and disassembly happen once and feed
+/// all three (pure) comparisons. A failure before that (no/unreadable exe,
+/// unresolvable pattern) is a single message: no comparison can run.
 pub fn run_checks(
     args: &AbiCheckArgs<'_>,
     exe_path: Option<&Path>,
@@ -125,20 +122,16 @@ pub fn run_checks(
 pub struct AbiCheckArgs<'a> {
     pub pattern: &'a str,
     pub call_target: bool,
-    /// Parameter count read off the annotated type itself. `None` when the item
-    /// isn't a bare-fn type, in which case there is nothing to compare.
+    /// Param count read off the annotated type. `None` if not a bare-fn type.
     pub declared_args: Option<u8>,
     pub item_name: &'a str,
-    /// Developer-recorded byte template for [`check_full_signature`]. `None`
-    /// means that check isn't requested for this item at all (fully
-    /// optional, backward compatible with items that only want the
-    /// arg-count check).
+    /// Developer-recorded byte template for the full-signature check. `None`
+    /// means that check isn't requested for this item (fully optional).
     pub full_signature: Option<&'a str>,
 }
 
-/// Compares a single FFI function pointer's declared parameter count against
-/// what disassembling the real game function recovered. Pure: no filesystem,
-/// no pattern resolution.
+/// Compares an FFI fn pointer's declared param count against what
+/// disassembling the real function recovered. Pure.
 fn compare_arg_count(args: &AbiCheckArgs<'_>, recovered: &RecoveredArgCount) -> Result<(), String> {
     let Some(declared) = args.declared_args else {
         return Ok(());
@@ -146,7 +139,7 @@ fn compare_arg_count(args: &AbiCheckArgs<'_>, recovered: &RecoveredArgCount) -> 
     let total = recovered.total();
     if total != declared {
         return Err(format!(
-            "abi-verify: ABI drift in `{}` — the type declares {declared} parameter(s), the binary uses {total} \
+            "abi-verify: ABI drift in `{}`: the type declares {declared} parameter(s), the binary uses {total} \
              ({} in registers + {} on the stack).\n  \
              recovered stack-arg widths, in order: {}\n  \
              Line those widths up against the declared parameters after the first four (which go in registers): a \
@@ -163,23 +156,27 @@ fn compare_arg_count(args: &AbiCheckArgs<'_>, recovered: &RecoveredArgCount) -> 
 
 /// Renders widths as `[8, 4, 1, ?]`, `?` for a slot never seen read.
 fn format_widths(widths: &[Option<u8>]) -> String {
-    let rendered: Vec<String> =
-        widths.iter().map(|width| width.map_or_else(|| "?".to_owned(), |width| width.to_string())).collect();
+    let rendered: Vec<String> = widths
+        .iter()
+        .map(|width| width.map_or_else(|| "?".to_owned(), |width| width.to_string()))
+        .collect();
     format!("[{}]", rendered.join(", "))
 }
 
 /// Renders bytes as an IDA-style hex string, ready to paste into a pattern.
 fn format_bytes(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02X}")).collect::<Vec<_>>().join(" ")
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
-/// Compares the resolved function's actual bytes (`body`, starting at its
-/// first byte) against a developer-recorded "full signature" byte template —
-/// independent of the parameter-count check, and pure like it.
+/// Compares the resolved function's bytes (`body`) against a developer-recorded
+/// full-signature template. Independent of the count check, and pure.
 ///
-/// `args.full_signature` being `None` means this check wasn't requested for
-/// this item at all: rather than making the caller branch on that, this
-/// function itself treats it as a trivial `Ok(())` no-op.
+/// `args.full_signature == None` means the check wasn't requested: treated as
+/// a trivial `Ok(())` no-op so the caller needn't branch.
 fn compare_full_signature(args: &AbiCheckArgs<'_>, body: &[u8]) -> Result<(), String> {
     let Some(full_signature) = args.full_signature else {
         return Ok(());
@@ -187,7 +184,7 @@ fn compare_full_signature(args: &AbiCheckArgs<'_>, body: &[u8]) -> Result<(), St
 
     match abi_verify::full_signature::matches_at_start(body, full_signature) {
         None => Err(format!(
-            "abi-verify: the `full_signature` recorded for `{}` is malformed — every token must be a two-digit \
+            "abi-verify: the `full_signature` recorded for `{}` is malformed: every token must be a two-digit \
              hex byte or `?`.\n  \
              got: {full_signature}",
             args.item_name
@@ -198,13 +195,13 @@ fn compare_full_signature(args: &AbiCheckArgs<'_>, body: &[u8]) -> Result<(), St
                 .map(|count| format_bytes(&body[..count.min(body.len())]))
                 .unwrap_or_default();
             Err(format!(
-                "abi-verify: `{}`'s bytes changed — the function at the resolved address no longer matches its \
+                "abi-verify: `{}`'s bytes changed: the function at the resolved address no longer matches its \
                  recorded `full_signature`. This is independent of the parameter count and catches edits inside \
                  the body, or a `pattern` that drifted onto a different function.\n  \
                  recorded: {full_signature}\n  \
                  actual:   {actual}\n  \
                  If the function is still the right one, replace `full_signature` with the `actual` bytes above, \
-                 re-wildcarding (`?`) any rel32 displacement — those move with every build and must not be pinned.",
+                 re-wildcarding (`?`) any rel32 displacement; those move with every build and must not be pinned.",
                 args.item_name
             ))
         }
@@ -212,34 +209,22 @@ fn compare_full_signature(args: &AbiCheckArgs<'_>, body: &[u8]) -> Result<(), St
     }
 }
 
-/// Checks each declared STACK-passed parameter's byte width against what the
-/// disassembler recovered reading that slot in the real game binary — a third
-/// check, catching a class the parameter *count* can't (e.g. a pointer arg
-/// silently becoming a non-pointer, or vice versa, without the slot count
-/// changing).
+/// Checks each declared STACK-passed param's byte width against what the
+/// disassembler recovered, catching drift the param count can't (a pointer arg
+/// silently becoming a non-pointer without the slot count changing).
 ///
-/// `declared_widths` and `param_names` are indexed by declared parameter
-/// position (`None` width = a Rust type the caller couldn't map to a byte
-/// size; `None` name = an unnamed parameter).
+/// `declared_widths`/`param_names` indexed by declared position (`None` width
+/// = unmappable Rust type; `None` name = unnamed param).
 ///
-/// Only STACK-passed args (declared position >= 4, under the Microsoft x64
-/// convention where the first four integer/pointer args go in registers) are
-/// checked, and only against the pointer/8-byte boundary — the empirically
-/// reliable signal (validated against the real `CharacterDataStack::Push`,
-/// whose 14 stack slots' recovered widths matched their declared types
-/// exactly). Register-arg widths are deliberately NOT checked: MSVC prologues
-/// spill all four register args to shadow space as full 64-bit stores
-/// regardless of real width, so their recovered width is meaningless. Finer
-/// distinctions (e.g. `bool` vs `i32`, both <8 bytes) are also not enforced,
-/// as a compiler may legitimately read a narrow value with a wider load;
-/// only the 8-vs-not-8 (pointer) boundary is treated as authoritative.
+/// Only stack args (position >= 4) are checked, and only at the 8-byte pointer
+/// boundary, the empirically reliable signal (validated against the real
+/// `CharacterDataStack::Push`). Register widths are NOT checked (shadow-space
+/// 64-bit spills make them meaningless); sub-8-byte distinctions aren't either
+/// (a narrow value may be read with a wider load).
 ///
-/// Assumes every parameter is integer/pointer class (no floats/XMM, no
-/// by-value aggregates) — true for this project's FFI signatures. If the
-/// disassembler detected a float/vector argument (`has_float_args`), that
-/// assumption is violated (a float arg consumes a shared slot index and
-/// shifts the integer-position-to-stack-slot mapping), so the check is
-/// skipped entirely rather than risk a false mismatch.
+/// Assumes all params are integer/pointer class (true for this project). If a
+/// float arg is detected (`has_float_args`), the slot mapping shifts, so the
+/// check is skipped rather than risk a false mismatch.
 fn compare_widths(
     declared_widths: &[Option<u8>],
     recovered: &RecoveredArgCount,
@@ -251,17 +236,21 @@ fn compare_widths(
     }
     let mut mismatches = Vec::new();
     for (idx, declared) in declared_widths.iter().enumerate() {
-        // Register args (first four) — shadow-space homogenization, skip.
+        // Register args (first four): shadow-space homogenization, skip.
         if idx < 4 {
             continue;
         }
         let Some(declared) = *declared else { continue }; // unmappable Rust type
         let stack_slot = idx - 4;
-        let Some(Some(recovered_width)) = recovered.stack_arg_widths.get(stack_slot).copied() else {
+        let Some(Some(recovered_width)) = recovered.stack_arg_widths.get(stack_slot).copied()
+        else {
             continue; // slot beyond what was recovered, or never actually read
         };
         if (declared == 8) != (recovered_width == 8) {
-            let name = param_names.get(idx).and_then(Option::as_deref).unwrap_or("_");
+            let name = param_names
+                .get(idx)
+                .and_then(Option::as_deref)
+                .unwrap_or("_");
             mismatches.push(format!(
                 "param #{idx} `{name}` declared {declared}-byte but the function reads that stack slot at \
                  {recovered_width} bytes"
@@ -273,7 +262,7 @@ fn compare_widths(
     }
     Err(format!(
         "abi-verify: stack-argument width drift for `{item_name}` at the pointer (8-byte) boundary: {}. \
-         The game may have been patched — verify the declared parameter types against the current binary. \
+         The game may have been patched; verify the declared parameter types against the current binary. \
          (Register-argument widths are intentionally not checked: shadow-space spills make them unreliable.)",
         mismatches.join("; ")
     ))
@@ -297,8 +286,24 @@ mod width_tests {
     #[test]
     fn matching_stack_widths_pass() {
         // 4 register params (widths irrelevant) + 3 stack params: ptr, i32, ptr.
-        let declared = [Some(8), Some(8), Some(4), Some(4), Some(8), Some(4), Some(8)];
-        let names = [None, None, None, None, Some("a".to_owned()), Some("b".to_owned()), Some("c".to_owned())];
+        let declared = [
+            Some(8),
+            Some(8),
+            Some(4),
+            Some(4),
+            Some(8),
+            Some(4),
+            Some(8),
+        ];
+        let names = [
+            None,
+            None,
+            None,
+            None,
+            Some("a".to_owned()),
+            Some("b".to_owned()),
+            Some("c".to_owned()),
+        ];
         let rec = recovered(vec![Some(8), Some(4), Some(8)]);
         assert_eq!(compare_widths(&declared, &rec, &names, "Foo"), Ok(()));
     }
@@ -313,13 +318,16 @@ mod width_tests {
         let err = compare_widths(&declared, &rec, &names, "Foo").expect_err("should fail");
         assert!(err.contains("model_ptr"), "names the param: {err}");
         assert!(err.contains("param #4"), "names the position: {err}");
-        assert!(err.contains("8-byte") && err.contains("4 bytes"), "names both widths: {err}");
+        assert!(
+            err.contains("8-byte") && err.contains("4 bytes"),
+            "names both widths: {err}"
+        );
     }
 
     #[test]
     fn register_arg_width_mismatch_is_not_enforced() {
         // Register params (idx 0..4) have deliberately "wrong" declared widths
-        // vs. the recovered register widths — must NOT fire (registers skipped).
+        // vs. recovered; must NOT fire (registers skipped).
         let declared = [Some(1), Some(1), Some(1), Some(1)];
         let rec = recovered(vec![]);
         assert_eq!(compare_widths(&declared, &rec, &[], "Foo"), Ok(()));
@@ -327,19 +335,22 @@ mod width_tests {
 
     #[test]
     fn float_args_skip_the_width_check_entirely() {
-        // A declared 8-byte pointer stack arg read at 4 bytes would normally
-        // fire — but with has_float_args set, the position mapping is
-        // unreliable, so the whole check is skipped (returns Ok).
+        // A declared 8-byte ptr stack arg read at 4 bytes would normally fire,
+        // but has_float_args makes the position mapping unreliable, so the
+        // whole check is skipped (returns Ok).
         let declared = [Some(8), Some(8), Some(4), Some(4), Some(8)];
         let mut rec = recovered(vec![Some(4)]);
         rec.has_float_args = true;
-        assert_eq!(compare_widths(&declared, &rec, &[None, None, None, None, None], "Foo"), Ok(()));
+        assert_eq!(
+            compare_widths(&declared, &rec, &[None, None, None, None, None], "Foo"),
+            Ok(())
+        );
     }
 
     #[test]
     fn non_pointer_boundary_differences_below_8_are_not_enforced() {
-        // Declared bool (1) but read as 4 bytes (movzx-into-32-bit) — both
-        // are non-pointer (<8), so this deliberately does NOT fire.
+        // Declared bool (1) but read as 4 bytes (movzx); both non-pointer
+        // (<8), so this deliberately does NOT fire.
         let declared = [Some(8), Some(8), Some(4), Some(4), Some(1)];
         let rec = recovered(vec![Some(4)]);
         let names: [Option<String>; 5] = [None, None, None, None, None];
@@ -347,30 +358,32 @@ mod width_tests {
     }
 }
 
-/// Formats a compact summary of a bare-fn type's declared parameter names,
-/// for appending to an error message from [`check_abi`] or
-/// [`check_full_signature`] as extra context — e.g. `"this, model, _, _,
-/// gear"`, with `_` standing in for a position that has no name.
+/// Compact summary of a bare-fn's declared param names for an error message,
+/// e.g. `"this, model, _, _, gear"` (`_` = unnamed position).
 ///
-/// Returns `None` when there's nothing worth reporting: either `names` is
-/// empty (no parameters at all), or every position is unnamed (an
-/// all-underscore summary would be pure noise) — in both cases, callers
-/// should leave their original message untouched rather than appending it.
+/// `None` when nothing's worth reporting: `names` empty, or every position
+/// unnamed (an all-underscore summary is noise). Callers then append nothing.
 pub fn summarize_param_names(names: &[Option<String>]) -> Option<String> {
     if names.iter().all(Option::is_none) {
         return None;
     }
-    Some(names.iter().map(|name| name.as_deref().unwrap_or("_")).collect::<Vec<_>>().join(", "))
+    Some(
+        names
+            .iter()
+            .map(|name| name.as_deref().unwrap_or("_"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{format_bytes, run_checks, summarize_param_names, AbiCheckArgs};
+    use super::{AbiCheckArgs, format_bytes, run_checks, summarize_param_names};
     use iced_x86::{Code, Encoder, Instruction, MemoryOperand, Register};
     use std::path::Path;
 
-    /// `run_checks` with no declared widths/names — the width check needs both
-    /// and is covered on its own in `width_tests`.
+    /// `run_checks` with no declared widths/names; the width check needs both
+    /// and is covered in `width_tests`.
     fn errors(args: &AbiCheckArgs<'_>, exe_path: Option<&Path>) -> Vec<String> {
         run_checks(args, exe_path, &[], &[])
     }
@@ -378,14 +391,16 @@ mod tests {
     /// The single expected failure message, or a panic naming what came instead.
     fn only_error(args: &AbiCheckArgs<'_>, exe_path: Option<&Path>) -> String {
         let mut errors = errors(args, exe_path);
-        assert_eq!(errors.len(), 1, "expected exactly one failure, got {errors:?}");
+        assert_eq!(
+            errors.len(),
+            1,
+            "expected exactly one failure, got {errors:?}"
+        );
         errors.remove(0)
     }
 
-    /// Builds a minimal but structurally valid synthetic PE buffer with a
-    /// single `.text` section whose raw data is `section_data`. Mirrors
-    /// `abi_verify::pe`'s own `make_synthetic_pe` test helper (that one is
-    /// private to its crate, so it's not reusable from here directly).
+    /// Minimal valid synthetic PE with one `.text` section holding
+    /// `section_data`. Mirrors `abi_verify::pe`'s helper (private to its crate).
     fn make_synthetic_pe(section_data: &[u8]) -> Vec<u8> {
         let mut buf = Vec::new();
 
@@ -432,26 +447,37 @@ mod tests {
         let path = std::env::temp_dir().join(format!(
             "abi-verify-macro-check-test-{}-{}-{name}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         std::fs::write(&path, bytes).unwrap();
         path
     }
 
-    /// Encodes `mov [rsp-8], rcx; mov [rsp-16], rdx; ret` — a tiny function
-    /// that reads exactly 2 register parameters (RCX, RDX), per the same
-    /// technique `abi-verify`'s own `arg_count` tests use.
+    /// Encodes `mov [rsp-8],rcx; mov [rsp-16],rdx; ret`: a tiny function
+    /// reading exactly 2 register params (RCX, RDX).
     fn two_arg_function_bytes() -> Vec<u8> {
         let spill = |disp: i64, reg: Register| {
-            Instruction::with2(Code::Mov_rm64_r64, MemoryOperand::with_base_displ(Register::RSP, disp), reg)
-                .expect("mov [rsp+disp], reg64 must encode")
+            Instruction::with2(
+                Code::Mov_rm64_r64,
+                MemoryOperand::with_base_displ(Register::RSP, disp),
+                reg,
+            )
+            .expect("mov [rsp+disp], reg64 must encode")
         };
-        let instructions =
-            [spill(-8, Register::RCX), spill(-16, Register::RDX), Instruction::with(Code::Retnq)];
+        let instructions = [
+            spill(-8, Register::RCX),
+            spill(-16, Register::RDX),
+            Instruction::with(Code::Retnq),
+        ];
         let mut encoder = Encoder::new(64);
         let mut rip = 0u64;
         for instruction in &instructions {
-            let len = encoder.encode(instruction, rip).expect("test instruction must encode");
+            let len = encoder
+                .encode(instruction, rip)
+                .expect("test instruction must encode");
             rip += len as u64;
         }
         encoder.take_buffer()
@@ -459,13 +485,10 @@ mod tests {
 
     /// Appends trailing NOP padding after `function_bytes`.
     ///
-    /// `aobscan`'s single-threaded scan loop has an off-by-one: it never
-    /// checks the final possible match position when the pattern's length
-    /// equals the searched buffer's length exactly (`length = data.len() -
-    /// signature.len()` then `for i in 0..length` — zero iterations when
-    /// they're equal). A `.text` section that's *exactly* the function under
-    /// test hits that edge case, so the padding here keeps the buffer
-    /// strictly longer than the pattern being searched for.
+    /// `aobscan`'s scan loop has an off-by-one: it never checks the final match
+    /// position when pattern length equals buffer length exactly (`for i in
+    /// 0..(data.len() - sig.len())` = zero iterations when equal). A `.text`
+    /// that's exactly the function under test hits this, so pad it longer.
     fn section_bytes(function_bytes: &[u8]) -> Vec<u8> {
         let mut bytes = function_bytes.to_vec();
         bytes.extend_from_slice(&[0x90; 16]);
@@ -521,10 +544,19 @@ mod tests {
         let err = only_error(&args, Some(&path));
         let _ = std::fs::remove_file(&path);
 
-        assert!(err.contains("declares 5"), "message should mention declared count: {err}");
-        assert!(err.contains("uses 2"), "message should mention recovered count: {err}");
+        assert!(
+            err.contains("declares 5"),
+            "message should mention declared count: {err}"
+        );
+        assert!(
+            err.contains("uses 2"),
+            "message should mention recovered count: {err}"
+        );
         // The widths are the actionable part: they locate the added/removed slot.
-        assert!(err.contains("recovered stack-arg widths"), "message should list recovered widths: {err}");
+        assert!(
+            err.contains("recovered stack-arg widths"),
+            "message should list recovered widths: {err}"
+        );
     }
 
     #[test]
@@ -543,8 +575,14 @@ mod tests {
         let err = only_error(&args, Some(&path));
         let _ = std::fs::remove_file(&path);
 
-        assert!(err.contains("could not locate"), "message should say the function wasn't located: {err}");
-        assert!(err.contains("FF FF FF"), "message should quote the pattern that failed: {err}");
+        assert!(
+            err.contains("could not locate"),
+            "message should say the function wasn't located: {err}"
+        );
+        assert!(
+            err.contains("FF FF FF"),
+            "message should quote the pattern that failed: {err}"
+        );
     }
 
     #[test]
@@ -559,7 +597,10 @@ mod tests {
         };
         // One message, not one per check: nothing can be verified at all.
         let err = only_error(&args, Some(&path));
-        assert!(err.contains(&path.display().to_string()), "message should mention the path: {err}");
+        assert!(
+            err.contains(&path.display().to_string()),
+            "message should mention the path: {err}"
+        );
     }
 
     #[test]
@@ -605,10 +646,19 @@ mod tests {
         let err = only_error(&args, Some(&path));
         let _ = std::fs::remove_file(&path);
 
-        assert!(err.contains("bytes changed"), "message should say the bytes changed: {err}");
-        assert!(err.contains(&full_signature), "message should quote the recorded template: {err}");
+        assert!(
+            err.contains("bytes changed"),
+            "message should say the bytes changed: {err}"
+        );
+        assert!(
+            err.contains(&full_signature),
+            "message should quote the recorded template: {err}"
+        );
         // The point of the message: the fix is pasteable straight out of it.
-        assert!(err.contains(&real_bytes_hex), "message should quote the actual bytes: {err}");
+        assert!(
+            err.contains(&real_bytes_hex),
+            "message should quote the actual bytes: {err}"
+        );
     }
 
     #[test]
@@ -628,7 +678,10 @@ mod tests {
         let err = only_error(&args, Some(&path));
         let _ = std::fs::remove_file(&path);
 
-        assert!(err.contains("malformed"), "message should mention 'malformed': {err}");
+        assert!(
+            err.contains("malformed"),
+            "message should mention 'malformed': {err}"
+        );
     }
 
     #[test]
@@ -660,7 +713,10 @@ mod tests {
     #[test]
     fn summarize_param_names_all_present() {
         let names = vec![Some("this".to_owned()), Some("model".to_owned())];
-        assert_eq!(summarize_param_names(&names), Some("this, model".to_owned()));
+        assert_eq!(
+            summarize_param_names(&names),
+            Some("this, model".to_owned())
+        );
     }
 
     #[test]
@@ -671,8 +727,16 @@ mod tests {
 
     #[test]
     fn summarize_param_names_mixed() {
-        let names = vec![Some("this".to_owned()), None, Some("model".to_owned()), None];
-        assert_eq!(summarize_param_names(&names), Some("this, _, model, _".to_owned()));
+        let names = vec![
+            Some("this".to_owned()),
+            None,
+            Some("model".to_owned()),
+            None,
+        ];
+        assert_eq!(
+            summarize_param_names(&names),
+            Some("this, _, model, _".to_owned())
+        );
     }
 
     #[test]

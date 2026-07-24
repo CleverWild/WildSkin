@@ -1,15 +1,14 @@
 //! The "Other Champs" tab: per-champion skin combos, grouped by ally/enemy.
 
 use super::widgets::{footer, skin_combo};
-use crate::fnv::fnv1a;
 use crate::memory::ResolvedOffsets;
 use crate::sdk::ai_base_common::{AIBaseCommon, AIHero};
+use crate::util::fnv::fnv1a;
 use hudhook::imgui::Ui;
 use std::ffi::CString;
 
-/// Renders a per-hero skin combo for every champion but the local player,
-/// grouped under an "Ally"/"Enemy" separator by team. Selecting a skin
-/// applies it immediately and persists the ally/enemy skin-index maps.
+/// Per-hero skin combo for every champion but the local player, grouped by
+/// team under an Ally/Enemy separator. Applies on select and persists the maps.
 pub(super) fn render_other_champs_tab(
     ui: &Ui,
     off: &ResolvedOffsets,
@@ -26,18 +25,16 @@ pub(super) fn render_other_champs_tab(
         if player.map(|p| p as usize) == Some(hero_addr) {
             continue;
         }
-        // SAFETY: `hero_ref` is live and `character_data_stack` is the
-        // correct offset for it.
+        // SAFETY: `hero_ref` live, `character_data_stack` correct.
         let stack = unsafe { hero_ref.character_data_stack_ref(off.fields.character_data_stack) };
-        // SAFETY: `model` is a valid, initialized MSVC string on a live stack.
+        // SAFETY: `model` is a valid MSVC string on a live stack.
         let model = unsafe { stack.base_skin.model.as_str() };
         let (champ_hash, model_name) = (fnv1a(model), model.to_owned());
         if champ_hash == fnv1a("PracticeTool_TargetDummy") {
             continue;
         }
 
-        // SAFETY: `hero_ref` is live.
-        let hero_team = unsafe { hero_ref.team() };
+        let hero_team = hero_ref.team;
         let is_enemy = hero_team != my_team;
         if last_team == 0 || hero_team != last_team {
             if last_team != 0 {
@@ -53,8 +50,7 @@ pub(super) fn render_other_champs_tab(
 
         let mut config = state.config.lock().unwrap();
 
-        // SAFETY: `hero_ref` is live with a valid `MsvcString` name field.
-        let name = unsafe { hero_ref.name() };
+        let name = &hero_ref.name;
         // SAFETY: `name` was just resolved above from a live `hero_ref`.
         let hero_name = unsafe { name.as_str() }.to_owned();
         let label = if config.hero_name {
@@ -83,15 +79,12 @@ pub(super) fn render_other_champs_tab(
                 && let Some(skin) = values.get((idx - 1) as usize)
                 && let Ok(c_model) = CString::new(skin.model_name.clone())
             {
-                // SAFETY: `hero_ref` is live and `off`'s offsets/
-                // function addresses are correct for it.
+                // SAFETY: `hero_ref` live, `off`'s offsets/addresses correct.
                 unsafe {
                     hero_ref.change_skin(
                         off.fields.character_data_stack,
                         off.fields.skin_id,
-                        off.fns.character_data_stack_push,
-                        off.fns.character_data_stack_update,
-                        off.fns.msvc_string_dtor,
+                        &off.fns.skin_apply,
                         &c_model,
                         skin.skin_id,
                         &state.database.special_skins,
@@ -103,7 +96,7 @@ pub(super) fn render_other_champs_tab(
                 .config
                 .lock()
                 .unwrap()
-                .save(&crate::config::config_dir(), None);
+                .save(&crate::app::config::config_dir(), None);
         }
     }
     footer(ui);

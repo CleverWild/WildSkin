@@ -1,6 +1,5 @@
-// The `[lib] name` is "WildSkin" (PascalCase) rather than snake_case
-// because the output filename must be exactly `WildSkin.dll` — the
-// separate `WildSkin-injector` crate loads this exact filename.
+// [lib] name is "WildSkin" (PascalCase) not snake_case so the output is
+// exactly WildSkin.dll, the filename WildSkin-injector loads.
 #![allow(
     non_snake_case,
     reason = "the [lib] name is \"WildSkin\" (PascalCase) so the output filename matches WildSkin.dll exactly"
@@ -14,25 +13,14 @@
     )
 )]
 
-// Re-exported so the vendored `offset!` macro (see `offset.rs`) can refer to
-// it as `$crate::paste::paste!`, matching how the crate it was vendored from
-// re-exported its own `paste` dependency the same way.
-
-#[macro_use]
-pub(crate) mod offset;
-mod config;
-mod crypt;
+mod app;
 mod entry;
-mod fnv;
 mod gui;
-mod keybind;
-mod logger;
 mod memory;
-mod overlay;
 mod sdk;
-mod skin_database;
 mod skin_logic;
 mod state;
+mod util;
 
 use hudhook::windows::{
     Win32::{
@@ -56,12 +44,9 @@ unsafe extern "system" fn DllMain(
     _reserved: *mut std::ffi::c_void,
 ) -> i32 {
     if reason == DLL_PROCESS_ATTACH && is_target_process() {
-        // The `SetWindowsHookEx` injector's own hook is what's keeping
-        // this module mapped in the target process; once it calls
-        // `UnhookWindowsHookEx`, Windows is free to unload us out from
-        // under the background worker thread `entry::attach` spawns below.
-        // Pinning permanently increments the loader's reference count so
-        // this module survives for the rest of the process's lifetime.
+        // The injector unhooks right after injecting, freeing Windows to
+        // unload us from under the worker thread entry::attach spawns.
+        // Pin the module so it survives for the process's lifetime.
         pin_module();
         // SAFETY: `hmodule` is the real module handle passed by the loader
         // for this DLL_PROCESS_ATTACH notification.
@@ -83,12 +68,9 @@ fn pin_module() {
     };
 }
 
-/// The `SetWindowsHookEx` injector loads this DLL into whichever process
-/// owns the target thread it hooked. `LoadLibraryW` (called by the injector
-/// itself, in its own process, to resolve `HookProc`'s address) also
-/// triggers this same `DllMain`/`DLL_PROCESS_ATTACH` — so without this
-/// guard, the skin-changer's startup sequence would run inside the injector's own
-/// process too, hanging forever in `wait_for_game_client`.
+/// The injector's own `LoadLibraryW` (resolving `HookProc`) also fires this
+/// `DLL_PROCESS_ATTACH`; without this guard, startup would run inside the
+/// injector too and hang forever in `wait_for_game_client`.
 fn is_target_process() -> bool {
     let mut buf = [0u16; 260];
     // SAFETY: `buf` is a valid, writable, correctly-sized wide-char buffer;
@@ -100,11 +82,9 @@ fn is_target_process() -> bool {
         .is_some_and(|name| name.eq_ignore_ascii_case(shared::GAME_PROCESS_NAME))
 }
 
-/// Exported hook procedure the `SetWindowsHookEx`-based injector resolves
-/// by name. Installing this hook on a thread in the target process is what
-/// makes Windows map this DLL there in the first place — `DllMain` above
-/// does the real work once that happens, so this only needs to chain to
-/// the next hook in the chain, as required of any `WH_GETMESSAGE` hook.
+/// Exported hook proc the injector resolves by name; installing it is what
+/// maps this DLL into the target. `DllMain` does the real work, so this
+/// just chains to the next hook as a `WH_GETMESSAGE` hook must.
 #[unsafe(no_mangle)]
 extern "system" fn HookProc(code: i32, wparam: usize, lparam: isize) -> isize {
     CallNextHookEx(code, wparam, lparam)

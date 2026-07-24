@@ -1,20 +1,16 @@
-//! `#[verify_abi]`: an attribute for FFI function-pointer `type` aliases that
-//! checks the declared parameter count against what analysis of the real
-//! game binary on disk recovers, catching ABI drift (a game patch adding or
-//! removing a parameter) at compile time instead of at runtime as a crash.
-//! Optionally (via `full_signature = "..."`), it also checks the function's
-//! actual bytes against a developer-recorded byte template — a second,
-//! independent, stricter check that catches changes the arg-count heuristic
-//! alone can't see (e.g. the locator pattern coincidentally matching a
-//! different function after a patch).
+//! `#[verify_abi]`: attribute for FFI fn-pointer `type` aliases that checks the
+//! declared param count against analysis of the real game binary on disk,
+//! catching ABI drift at compile time instead of as a runtime crash.
+//! Optionally (`full_signature = "..."`) also checks the function's bytes
+//! against a recorded template, catching drift the count heuristic can't (e.g.
+//! the locator pattern matching a different function after a patch).
 //!
-//! All the real logic lives in the plain, unit-tested [`check`] module; this
-//! file is just token-stream plumbing around it.
+//! Real logic lives in the unit-tested [`check`] module; this is token plumbing.
 
 mod check;
 
-use abi_verify::{verification_disabled, DISABLED_ENV_VAR, EXE_PATH_ENV_VAR};
-use check::{run_checks, summarize_param_names, AbiCheckArgs};
+use abi_verify::{DISABLED_ENV_VAR, EXE_PATH_ENV_VAR, verification_disabled};
+use check::{AbiCheckArgs, run_checks, summarize_param_names};
 use proc_macro2::Span;
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,7 +27,7 @@ fn warn_game_not_found() {
     if !GAME_NOT_FOUND_WARNED.swap(true, Ordering::Relaxed) {
         eprintln!(
             "warning: abi-verify: no game executable found ({EXE_PATH_ENV_VAR} is unset and none was \
-             auto-detected at a standard install path) — binary ABI checks skipped; set {EXE_PATH_ENV_VAR} \
+             auto-detected at a standard install path), binary ABI checks skipped; set {EXE_PATH_ENV_VAR} \
              to your game exe to enable them, or set {DISABLED_ENV_VAR}=true to silence this."
         );
     }
@@ -41,9 +37,8 @@ fn warn_game_not_found() {
 struct ParsedAttr {
     pattern: String,
     call_target: bool,
-    /// Developer-recorded byte template, from an optional `full_signature =
-    /// "..."` argument. Absent by default: not every annotated item needs
-    /// this stricter check, and existing usages shouldn't have to opt in.
+    /// Developer-recorded byte template from optional `full_signature = "..."`.
+    /// Absent by default: the stricter check is opt-in.
     full_signature: Option<String>,
 }
 
@@ -60,10 +55,16 @@ fn parse_args(attr: proc_macro2::TokenStream) -> syn::Result<ParsedAttr> {
             return Err(syn::Error::new(meta.span(), "expected `name = value`"));
         };
         let Some(ident) = name_value.path.get_ident() else {
-            return Err(syn::Error::new(name_value.path.span(), "expected a plain identifier"));
+            return Err(syn::Error::new(
+                name_value.path.span(),
+                "expected a plain identifier",
+            ));
         };
         let Expr::Lit(ExprLit { lit, .. }) = &name_value.value else {
-            return Err(syn::Error::new(name_value.value.span(), "expected a literal value"));
+            return Err(syn::Error::new(
+                name_value.value.span(),
+                "expected a literal value",
+            ));
         };
 
         match (ident.to_string().as_str(), lit) {
@@ -71,27 +72,37 @@ fn parse_args(attr: proc_macro2::TokenStream) -> syn::Result<ParsedAttr> {
             ("call_target", Lit::Bool(lit_bool)) => call_target = Some(lit_bool.value),
             ("full_signature", Lit::Str(lit_str)) => full_signature = Some(lit_str.value()),
             ("pattern" | "call_target" | "full_signature", _) => {
-                return Err(syn::Error::new(lit.span(), format!("wrong literal type for `{ident}`")));
+                return Err(syn::Error::new(
+                    lit.span(),
+                    format!("wrong literal type for `{ident}`"),
+                ));
             }
             // Removed: the count is read off the annotated type's own parameter list.
             ("expected_args", _) => {
-                return Err(syn::Error::new(ident.span(), "`expected_args` is obsolete — delete it"));
+                return Err(syn::Error::new(
+                    ident.span(),
+                    "`expected_args` is obsolete, delete it",
+                ));
             }
-            _ => return Err(syn::Error::new(ident.span(), format!("unknown argument `{ident}`"))),
+            _ => {
+                return Err(syn::Error::new(
+                    ident.span(),
+                    format!("unknown argument `{ident}`"),
+                ));
+            }
         }
     }
 
     Ok(ParsedAttr {
-        pattern: pattern.ok_or_else(|| syn::Error::new(span, "missing required argument `pattern`"))?,
+        pattern: pattern
+            .ok_or_else(|| syn::Error::new(span, "missing required argument `pattern`"))?,
         call_target: call_target.unwrap_or(true),
         full_signature,
     })
 }
 
-/// Byte width of a declared parameter's Rust type, or `None` for a type we
-/// can't confidently map to a concrete size (skipped by the width check).
-/// Pointers, references, and fn-pointers are all 8 bytes on this project's
-/// only target (x86-64 Windows).
+/// Byte width of a declared param's Rust type, `None` if unmappable (skipped by
+/// the width check). Pointers/refs/fn-pointers are 8 bytes (x86-64 Windows).
 fn type_to_width(ty: &syn::Type) -> Option<u8> {
     match ty {
         syn::Type::Ptr(_) | syn::Type::Reference(_) | syn::Type::BareFn(_) => Some(8),
@@ -109,9 +120,8 @@ fn type_to_width(ty: &syn::Type) -> Option<u8> {
     }
 }
 
-/// Emits the annotated item alongside its `compile_error!`s. Dropping the item
-/// instead would bury the real message under a "cannot find type" error from
-/// every downstream user of the alias.
+/// Emits the annotated item alongside its `compile_error!`s. Dropping it would
+/// bury the real message under "cannot find type" errors from every user.
 fn emit_with_item(
     item: proc_macro::TokenStream,
     errors: impl Iterator<Item = proc_macro2::TokenStream>,
@@ -121,7 +131,10 @@ fn emit_with_item(
 }
 
 #[proc_macro_attribute]
-pub fn verify_abi(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+pub fn verify_abi(
+    attr: proc_macro::TokenStream,
+    item: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
     // Switched off entirely (CI): a pure passthrough, emitting nothing at all.
     if verification_disabled() {
         return item;
@@ -133,32 +146,38 @@ pub fn verify_abi(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) 
     };
 
     let Ok(item_type) = syn::parse::<syn::ItemType>(item.clone()) else {
-        let error = syn::Error::new(Span::call_site(), "#[verify_abi] can only be applied to a `type Alias = ...;` item")
-            .to_compile_error();
+        let error = syn::Error::new(
+            Span::call_site(),
+            "#[verify_abi] can only be applied to a `type Alias = ...;` item",
+        )
+        .to_compile_error();
         return emit_with_item(item, std::iter::once(error));
     };
     let item_name = item_type.ident.to_string();
 
-    // Bare-fn parameter names are pure documentation as far as the type
-    // system is concerned (`fn(this: usize)` and `fn(usize)` are the same
-    // type), but `syn` still hands them to us, so they're read here for two
-    // purposes: the always-on arity self-check below, and enriching the two
-    // exe-dependent checks' error messages further down. Gracefully skipped
-    // (rather than erroring) when the underlying type isn't a bare-fn type
-    // at all, which shouldn't happen for this macro's intended use but isn't
-    // this macro's job to police.
+    // Bare-fn param names are docs to the type system (`fn(this: usize)` ==
+    // `fn(usize)`), but syn hands them over: used for the arity check and to
+    // enrich error messages. Skipped (not an error) if not a bare-fn type.
     let bare_fn = match &*item_type.ty {
         syn::Type::BareFn(bare_fn) => Some(bare_fn),
         _ => None,
     };
     let param_names: Vec<Option<String>> = bare_fn.map_or_else(Vec::new, |bare_fn| {
-        bare_fn.inputs.iter().map(|input| input.name.as_ref().map(|(ident, _)| ident.to_string())).collect()
+        bare_fn
+            .inputs
+            .iter()
+            .map(|input| input.name.as_ref().map(|(ident, _)| ident.to_string()))
+            .collect()
     });
-    // Byte width expected for each declared parameter's Rust type, used by the
-    // stack-argument width check below. `None` for any type we can't map to a
-    // concrete size (that slot is then skipped, not guessed).
-    let declared_widths: Vec<Option<u8>> =
-        bare_fn.map_or_else(Vec::new, |bare_fn| bare_fn.inputs.iter().map(|input| type_to_width(&input.ty)).collect());
+    // Expected byte width per declared param, for the width check. `None` for
+    // an unmappable type (that slot is skipped, not guessed).
+    let declared_widths: Vec<Option<u8>> = bare_fn.map_or_else(Vec::new, |bare_fn| {
+        bare_fn
+            .inputs
+            .iter()
+            .map(|input| type_to_width(&input.ty))
+            .collect()
+    });
     let param_names_summary = summarize_param_names(&param_names);
 
     // Resolved once, shared by all three exe-dependent checks.

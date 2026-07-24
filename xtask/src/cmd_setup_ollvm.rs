@@ -2,23 +2,18 @@ use std::io::{Cursor, Read as _};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Pinned release of <https://github.com/ParkSnoopy/rust_llvm-arkari_ollvm> —
-/// a full `rustc` build (Rust 1.96.0-dev) linked against a custom LLVM 22.1
-/// with the Arkari (`KomiMoe/Arkari`) `irobf` obfuscation passes baked in
-/// natively, so no `-Zllvm-plugins` plugin DLL is needed. Pinned rather than
-/// "latest": the obfuscation flags are version-sensitive (a plugin API
-/// mismatch or a different LLVM patch can silently change which `irobf-*`
-/// flags are stable — `--irobf-fla` already crashes `rustc_driver` on an
-/// `APInt` assertion against this exact build when combined with
-/// `windows`-crate-heavy code, see `cmd_build.rs`'s `OBFUSCATION_LLVM_ARGS`
-/// doc comment).
+/// Pinned release of <https://github.com/ParkSnoopy/rust_llvm-arkari_ollvm>: a
+/// full `rustc` (1.96.0-dev) on custom LLVM 22.1 with Arkari `irobf` passes
+/// baked in, so no `-Zllvm-plugins` DLL is needed. Pinned, not "latest": the
+/// flags are version-sensitive (an LLVM patch can change which `irobf-*` are
+/// stable; see `cmd_build.rs`'s `OBFUSCATION_LLVM_ARGS`).
 const RELEASE_TAG: &str = "R1940-L2210";
 const RELEASE_ASSET: &str = "x86_64-pc-windows-msvc.zip";
 const TOOLCHAIN_NAME: &str = "ollvm";
 
-/// Downloads and links the toolchain if it isn't already set up — makes
-/// `cargo xtask build --obfuscate` reproducible on a fresh machine or CI
-/// runner instead of depending on a by-hand `rustup toolchain link`.
+/// Downloads and links the toolchain if absent, so `cargo xtask build
+/// --obfuscate` is reproducible on a fresh machine or CI without a by-hand
+/// `rustup toolchain link`.
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let install_dir = toolchain_dir()?;
     let stage1 = install_dir.join("stage1");
@@ -31,9 +26,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Workspace-`target`-relative so it's covered by the same gitignore and CI
-/// cache scope as every other build artifact, rather than inventing a new
-/// machine-global location.
+/// Under the workspace `target` dir so it shares the same gitignore and CI
+/// cache scope as other artifacts, not a new machine-global location.
 fn toolchain_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let output = Command::new("cargo")
         .args(["metadata", "--format-version=1", "--no-deps"])
@@ -65,9 +59,8 @@ fn download_and_extract(install_dir: &Path) -> Result<(), Box<dyn std::error::Er
 }
 
 fn link_toolchain(stage1: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    // Idempotent: `rustup toolchain link` overwrites an existing link of the
-    // same name rather than erroring, so no separate "already linked" check
-    // is needed here (unlike the download/extract step above).
+    // Idempotent: `rustup toolchain link` overwrites an existing link, so no
+    // "already linked" check is needed (unlike download/extract above).
     let status = Command::new("rustup")
         .args(["toolchain", "link", TOOLCHAIN_NAME])
         .arg(stage1)

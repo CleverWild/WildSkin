@@ -1,50 +1,48 @@
-//! `ResolvedOffsets`: the resolved game globals and function addresses, plus
-//! the typed accessors the rest of the crate uses to reach them. Constructed
-//! once by `super::resolve::resolve_all`.
-//!
-//! Bucketed by *how they're used*, rather than the original's single flat
-//! `offsets::` namespace: [`GlobalPointers`] (global-variable pointers),
-//! [`FieldOffsets`] (struct-field byte offsets), [`FnAddresses`] (absolute
-//! function addresses).
+//! `ResolvedOffsets`: resolved game globals, field offsets, and function
+//! addresses, plus the typed accessors to reach them. Built once by
+//! `resolve_all`. Bucketed into [`GlobalPointers`], [`FieldOffsets`],
+//! [`FnAddresses`].
 
-use crate::sdk::ai_base_common::{AIBaseCommon, AIHero, AIMinionClient, AITurret};
+use crate::sdk::ai_base_common::{AIBaseCommon, AIHero, AIMinionClient, AITurret, GoldRedirectFn};
 use crate::sdk::champion::ChampionManager;
+use crate::sdk::character_data::{DtorFn, PushFn, SkinApplyFns, UpdateFn};
 use crate::sdk::game_state::{self, GameClient};
 use crate::sdk::primitives::ManagerTemplate;
 use std::ffi::CStr;
 
-// The game's key-to-localized-string lookup. Resolved via a call site
-// (`call TranslateString; ...`), so `call_target = true` follows the
-// `E8 rel32` to the real function. Its prologue here has only short (`rel8`)
-// in-function jumps, no layout-dependent `rel32` — so the byte template
-// needs no wildcards.
+// Key-to-localized-string lookup, resolved via a call site (`E8 rel32`).
+// Prologue has only short (`rel8`) jumps, no layout-dependent `rel32`, so the
+// byte template needs no wildcards.
 #[abi_verify_macro::verify_abi(
     pattern = "E8 ? ? ? ? 0F 57 DB 4C 8B C0 F3 0F 5A DE",
     full_signature = "40 53 48 83 EC 30 80 39 00 48 8B C1 8B D1 74 0B 48 FF C0 48 8B D0 80 38 00"
 )]
 type TranslateFn = unsafe extern "system" fn(key: *const i8) -> *const i8;
 
-/// Resolved global-variable pointers: the module base plus the game's global
-/// object lists and singletons. Reached only through [`ResolvedOffsets`]'
-/// accessor methods.
-struct GlobalPointers {
-    /// `base` and `window` are resolved for parity with the original's offset
-    /// set but not consumed yet — hudhook hooks Present globally, so the port
-    /// never needs the game window.
-    #[allow(dead_code, reason = "resolved for parity; not consumed yet — see field doc above")]
-    base: usize,
-    player: usize,
-    champion_manager: usize,
-    #[allow(dead_code, reason = "resolved for parity; not consumed yet — see the `base` field doc")]
-    window: usize,
-    hero_list: usize,
-    minion_list: usize,
-    turret_list: usize,
-    game_client: usize,
+/// Resolved global-variable pointers (module base, object lists, singletons).
+/// Reached only through [`ResolvedOffsets`]' accessors.
+pub(super) struct GlobalPointers {
+    /// `base`/`window` resolved for parity but unused: hudhook hooks Present
+    /// globally, so the window is never needed.
+    #[allow(
+        dead_code,
+        reason = "resolved for parity; not consumed yet, see field doc above"
+    )]
+    pub(super) base: usize,
+    pub(super) player: usize,
+    pub(super) champion_manager: usize,
+    #[allow(
+        dead_code,
+        reason = "resolved for parity; not consumed yet, see the `base` field doc"
+    )]
+    pub(super) window: usize,
+    pub(super) hero_list: usize,
+    pub(super) minion_list: usize,
+    pub(super) turret_list: usize,
+    pub(super) game_client: usize,
 }
 
-/// Resolved struct-field byte offsets, read/written directly on live game
-/// objects.
+/// Struct-field byte offsets, read/written directly on live game objects.
 pub struct FieldOffsets {
     pub character_data_stack: usize,
     pub skin_id: usize,
@@ -53,11 +51,43 @@ pub struct FieldOffsets {
 /// Resolved absolute function addresses, transmuted and called through the
 /// `sdk` layer's typed `*Fn` aliases.
 pub struct FnAddresses {
-    pub character_data_stack_push: usize,
-    pub character_data_stack_update: usize,
-    pub(super) translate_string: usize,
-    pub get_gold_redirect_target: usize,
-    pub msvc_string_dtor: usize,
+    /// push/update/dtor, bundled: always resolved and passed together.
+    pub skin_apply: SkinApplyFns,
+    pub(super) translate_string: TranslateFn,
+    pub get_gold_redirect_target: GoldRedirectFn,
+}
+
+impl FnAddresses {
+    /// Reinterprets raw addresses as their typed `*Fn` aliases once, so no
+    /// call site transmutes again.
+    ///
+    /// # Safety
+    /// Each address must be the game's live corresponding function, matching
+    /// the target `*Fn` signature.
+    pub(super) unsafe fn from_addrs(
+        push: usize,
+        update: usize,
+        dtor: usize,
+        translate: usize,
+        gold: usize,
+    ) -> Self {
+        // SAFETY: per fn contract; `push` matches `PushFn`.
+        let push = unsafe { std::mem::transmute::<usize, PushFn>(push) };
+        // SAFETY: per fn contract; `update` matches `UpdateFn`.
+        let update = unsafe { std::mem::transmute::<usize, UpdateFn>(update) };
+        // SAFETY: per fn contract; `dtor` matches `DtorFn`.
+        let dtor = unsafe { std::mem::transmute::<usize, DtorFn>(dtor) };
+        // SAFETY: per fn contract; `translate` matches `TranslateFn`.
+        let translate_string = unsafe { std::mem::transmute::<usize, TranslateFn>(translate) };
+        // SAFETY: per fn contract; `gold` matches `GoldRedirectFn`.
+        let get_gold_redirect_target =
+            unsafe { std::mem::transmute::<usize, GoldRedirectFn>(gold) };
+        Self {
+            skin_apply: SkinApplyFns { push, update, dtor },
+            translate_string,
+            get_gold_redirect_target,
+        }
+    }
 }
 
 pub struct ResolvedOffsets {
@@ -67,66 +97,55 @@ pub struct ResolvedOffsets {
 }
 
 /// Reinterprets a slice of raw game-object pointers as a slice of shared
-/// references. `*mut T` and `&T` are both thin pointers with identical size
-/// and alignment, so the slice's `(ptr, len)` layout is unchanged.
+/// references: `*mut T` and `&T` share layout, so `(ptr, len)` is unchanged.
 ///
 /// # Safety
-/// Every pointer in `ptrs` must be non-null and point at a live, valid `T`
-/// that stays valid for `'a` — exactly `&T`'s own validity requirement.
+/// Every pointer must be non-null and point at a live `T` valid for `'a`.
 const unsafe fn as_ref_slice<T>(ptrs: &[*mut T]) -> &[&T] {
     // SAFETY: per fn contract; `&T` has the same layout as `*mut T`.
     unsafe { std::slice::from_raw_parts(ptrs.as_ptr().cast::<&T>(), ptrs.len()) }
 }
 
 impl ResolvedOffsets {
-    #[allow(clippy::too_many_arguments, reason = "one-shot constructor fed by resolve_all's flat set of resolved values; a builder type would just move the same 15 values around")]
     pub(super) const fn new(
-        base: usize,
-        player: usize,
-        champion_manager: usize,
-        window: usize,
-        hero_list: usize,
-        minion_list: usize,
-        turret_list: usize,
-        game_client: usize,
-        character_data_stack: usize,
-        skin_id: usize,
-        character_data_stack_push: usize,
-        character_data_stack_update: usize,
-        translate_string: usize,
-        get_gold_redirect_target: usize,
-        msvc_string_dtor: usize,
+        globals: GlobalPointers,
+        fields: FieldOffsets,
+        fns: FnAddresses,
     ) -> Self {
         Self {
-            globals: GlobalPointers {
-                base,
-                player,
-                champion_manager,
-                window,
-                hero_list,
-                minion_list,
-                turret_list,
-                game_client,
-            },
-            fields: FieldOffsets {
-                character_data_stack,
-                skin_id,
-            },
-            fns: FnAddresses {
-                character_data_stack_push,
-                character_data_stack_update,
-                translate_string,
-                get_gold_redirect_target,
-                msvc_string_dtor,
-            },
+            globals,
+            fields,
+            fns,
         }
     }
 
-    #[expect(dead_code, reason = "accessor for the parity-only `base` field; kept alongside it for when it's wired up")]
+    /// Test-only: zeroed globals/fields (plain `usize`s, never dereferenced)
+    /// plus non-null dummy fn pointers (fn pointers can't be zero).
+    #[cfg(test)]
+    pub(crate) fn dummy_for_test() -> Self {
+        let dummy = std::ptr::NonNull::<()>::dangling().as_ptr() as usize;
+        // SAFETY: globals/fields are plain `usize` (all-zero valid, never read);
+        // each fn is a non-null dummy the tests never call.
+        unsafe {
+            Self {
+                globals: std::mem::zeroed(),
+                fields: std::mem::zeroed(),
+                fns: FnAddresses::from_addrs(dummy, dummy, dummy, dummy, dummy),
+            }
+        }
+    }
+
+    #[expect(
+        dead_code,
+        reason = "accessor for the parity-only `base` field; kept alongside it for when it's wired up"
+    )]
     pub const fn base(&self) -> usize {
         self.globals.base
     }
-    #[expect(dead_code, reason = "accessor for the parity-only `window` field; kept alongside it for when it's wired up")]
+    #[expect(
+        dead_code,
+        reason = "accessor for the parity-only `window` field; kept alongside it for when it's wired up"
+    )]
     pub const fn window(&self) -> usize {
         self.globals.window
     }
@@ -167,7 +186,8 @@ impl ResolvedOffsets {
     /// `ManagerTemplate<AIMinionClient>` whose entries are all live.
     pub const unsafe fn minion_list(&self) -> &[&AIMinionClient] {
         // SAFETY: per fn contract.
-        let list = unsafe { &*(self.globals.minion_list as *const ManagerTemplate<AIMinionClient>) };
+        let list =
+            unsafe { &*(self.globals.minion_list as *const ManagerTemplate<AIMinionClient>) };
         // SAFETY: per fn contract.
         let ptrs = unsafe { list.as_slice() };
         // SAFETY: per fn contract.
@@ -199,19 +219,21 @@ impl ResolvedOffsets {
     }
 
     /// # Safety
-    /// Caller guarantees `self.fns.translate_string` is the address of the
-    /// game's live `TranslateString`-style function, matching `TranslateFn`.
+    /// Caller guarantees `self.fns.translate_string` still points at the
+    /// game's live `TranslateString`-style function.
     pub unsafe fn translate(&self, key: &CStr) -> Option<String> {
         // SAFETY: per fn contract.
-        let func: TranslateFn = unsafe { std::mem::transmute(self.fns.translate_string) };
-        // SAFETY: per fn contract.
-        let raw = unsafe { func(key.as_ptr()) };
+        let raw = unsafe { (self.fns.translate_string)(key.as_ptr()) };
         if raw.is_null() {
             return None;
         }
         // SAFETY: per fn contract; `func` returns a NUL-terminated C string
         // (or null, checked above).
-        Some(unsafe { CStr::from_ptr(raw) }.to_string_lossy().into_owned())
+        Some(
+            unsafe { CStr::from_ptr(raw) }
+                .to_string_lossy()
+                .into_owned(),
+        )
     }
 }
 

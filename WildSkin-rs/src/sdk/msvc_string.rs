@@ -1,9 +1,6 @@
-//! MSVC `std::string` ABI mirror, used for exactly one field: the player's
-//! editable display name (`GameObject::Name` in the original C++). MSVC's
-//! `std::string` uses small-string-optimization (SSO): strings up to 15
-//! bytes live inline in a 16-byte buffer; longer strings heap-allocate
-//! through the game's own CRT allocator. Reading works for either case;
-//! writing is SSO-only (see `set_sso`).
+//! MSVC `std::string` ABI mirror, used for one field: the player's editable
+//! display name. SSO: strings up to 15 bytes live inline in a 16-byte buffer,
+//! longer ones heap-allocate. Reading handles both; writing is SSO-only.
 
 const SSO_CAPACITY: usize = 15;
 
@@ -24,7 +21,10 @@ impl MsvcString {
         let ptr = if self.capacity < 16 {
             self.buf.as_ptr()
         } else {
-            #[allow(clippy::cast_ptr_alignment, reason = "buf is 8-byte aligned transitively via the struct's usize fields forcing 8-byte alignment — verified during this struct's original review")]
+            #[allow(
+                clippy::cast_ptr_alignment,
+                reason = "buf is 8-byte aligned transitively via the struct's usize fields forcing 8-byte alignment, verified during this struct's original review"
+            )]
             let heap_ptr = self.buf.as_ptr().cast::<*const u8>();
             // SAFETY: caller guarantees the first 8 bytes of `buf` are a
             // valid heap pointer when `capacity >= 16`.
@@ -37,10 +37,8 @@ impl MsvcString {
     }
 
     /// ponytail: SSO-only; grow-to-heap path unsupported, see module doc.
-    ///
-    /// # Safety
-    /// Caller guarantees `self` is a valid, initialized MSVC `std::string`.
-    pub unsafe fn set_sso(&mut self, value: &str) -> bool {
+    /// Safe: body only writes `self`'s inline `buf`/`size` fields.
+    pub fn set_sso(&mut self, value: &str) -> bool {
         if self.capacity >= 16 || value.len() > SSO_CAPACITY {
             return false;
         }
@@ -56,7 +54,11 @@ mod tests {
     use super::*;
 
     fn empty_sso() -> MsvcString {
-        MsvcString { buf: [0; 16], size: 0, capacity: 15 }
+        MsvcString {
+            buf: [0; 16],
+            size: 0,
+            capacity: 15,
+        }
     }
 
     #[test]
@@ -71,13 +73,17 @@ mod tests {
     #[test]
     fn rejects_names_too_long_for_sso() {
         let mut s = empty_sso();
-        unsafe { assert!(!s.set_sso("ThisNameIsWayTooLongForSSO")) };
+        assert!(!s.set_sso("ThisNameIsWayTooLongForSSO"));
     }
 
     #[test]
     fn refuses_to_touch_an_already_heap_allocated_string() {
-        let mut s = MsvcString { buf: [0; 16], size: 20, capacity: 31 };
-        unsafe { assert!(!s.set_sso("short")) };
+        let mut s = MsvcString {
+            buf: [0; 16],
+            size: 20,
+            capacity: 31,
+        };
+        assert!(!s.set_sso("short"));
     }
 
     #[test]
@@ -86,7 +92,11 @@ mod tests {
         let backing = CString::new("a very long summoner name here").unwrap();
         let mut buf = [0u8; 16];
         buf[..8].copy_from_slice(&(backing.as_ptr() as usize).to_le_bytes());
-        let s = MsvcString { buf, size: backing.as_bytes().len(), capacity: 31 };
+        let s = MsvcString {
+            buf,
+            size: backing.as_bytes().len(),
+            capacity: 31,
+        };
         unsafe { assert_eq!(s.as_str(), "a very long summoner name here") };
     }
 }

@@ -1,10 +1,6 @@
-//! Live-process signature scanning and the resolved offsets it produces.
-//!
-//! - [`scanner`] — the low-level AOB pattern matcher + PE `.text` locator.
-//! - `signatures` — the AOB patterns for this game build.
-//! - `offsets` — [`ResolvedOffsets`] and its typed accessors.
-//! - `resolve` — the two-phase resolution (`wait_for_game_client` +
-//!   `resolve_all`) that fills a `ResolvedOffsets`.
+//! Live-process signature scanning and the [`ResolvedOffsets`] it produces.
+//! `scanner` matches AOB patterns in `.text`; `resolve` fills a
+//! `ResolvedOffsets` in two phases (`wait_for_game_client` + `resolve_all`).
 
 pub mod scanner;
 

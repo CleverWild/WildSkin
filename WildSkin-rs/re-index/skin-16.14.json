@@ -260,6 +260,452 @@
         "method": "runtime_signature_offset_scrape_discriminated",
         "score": 0.95
       }
+    },
+    {
+      "id": "skin.global_donor.game_client",
+      "metadata": {
+        "name": "GameClient_state_probe_host",
+        "prototype": "int64_t sub_1406e8610(void* this, void* p2)",
+        "comment": "Host fn carrying the 'mov rax,[rip+GameClient]' the runtime scrapes for GlobalPointers.game_client (GAME_CLIENT_SIG). This is the sig resolved FIRST in wait_for_game_client: match is the earliest full-pattern hit (an earlier '48 8B F2 83 78' at 0x1405e235e lacks the '48 8B 05' prefix and is skipped). Loads GameClient global slot @0x141EF37E8; runtime then derefs it and calls game_state::is_running. PROPOSED name/role; DB stripped as sub_1406e8610.",
+        "confidence": "high",
+        "provenance": "metadata=inference; resolved_address/byte_sig/runtime_signature/constants=DB-measured"
+      },
+      "signature": {
+        "byte_sig": "40 55 56 48 ? ? ? ? 48 81 EC ? ? ? ? 48 8B 05 ? ? ? ? 48 33 C4 48 ? ? ? 48 8B 05 ? ? ? ? 48 8B F2 83 ? ? ? 0F ? ? ? ? ? 8B ? 48 8B 0D ? ? ? ? 48 89 BC 24",
+        "cfg": { "note": "not_enumerated to avoid a large dump; entry prologue captured in byte_sig." },
+        "size_bucket": "medium"
+      },
+      "anchors": {
+        "runtime_signature": {
+          "symbol": "GAME_CLIENT_SIG",
+          "file": "WildSkin-rs/src/memory/signatures.rs",
+          "role": "global_pointer_load (sub_base + relative)",
+          "pattern": "48 8B 05 ? ? ? ? 48 8B F2 83 78",
+          "wildcard_free_run_searched": "48 8B F2 83 78",
+          "match_site": "0x1406e862d",
+          "resolved_global_slot": "0x141EF37E8",
+          "match": "5 raw hits for the dewildcarded run; 4 carry the '48 8B 05 ????' prefix (targets 0x141EF37E8 x3, 0x141ED9F80 x1); scanner takes the FIRST (0x1406e862d, GameClient @0x141EF37E8)."
+        },
+        "constants": ["0x141EF37E8 (GameClient global .data slot)"],
+        "named_neighbors": {}
+      },
+      "vars": {
+        "db_state": {
+          "note": "Host fn takes rcx(this)/rdx(p2); rdx moved into rsi at the match (48 8B F2). Locals are BN auto temporaries; full stack layout not enumerated."
+        },
+        "proposed": { "args": [] }
+      },
+      "last_resolved": {
+        "version": "16.14.794.5912",
+        "resolved_address": "0x1406e8610",
+        "method": "runtime_signature_global_load_first_match",
+        "score": 1.0
+      }
+    },
+    {
+      "id": "skin.global_donor.player",
+      "metadata": {
+        "name": "LocalPlayer_accessor_host",
+        "prototype": "void* sub_1402163f0(void* this, char p2)",
+        "comment": "Host fn carrying the 'mov rdi,[rip+Player]' the runtime scrapes for GlobalPointers.player (PLAYER_SIG). Match at 0x1402164ba is a null-check idiom (test rdi,rdi; jz; add rdi,0x290) over the Player global @0x141F10390. PROPOSED name/role; DB stripped as sub_1402163f0.",
+        "confidence": "high",
+        "provenance": "metadata=inference; resolved_address/byte_sig/runtime_signature/constants=DB-measured"
+      },
+      "signature": {
+        "byte_sig": "48 ? ? ? ? 57 48 ? ? ? 80 ? ? 0F ? ? ? ? ? 48 8D 1D ? ? ? ? 0F B6 C2 8B 84 83 ? ? ? ? 48 03 C3 FF ? 48 ? ? ? 48 ? ? ? ? 48 ? ? ? 5F C3 48 8B 81 ? ? ? ? 48",
+        "cfg": { "note": "not_enumerated; entry prologue captured in byte_sig. Match site 0x1402164ba is interior, not the entry." },
+        "size_bucket": "medium"
+      },
+      "anchors": {
+        "runtime_signature": {
+          "symbol": "PLAYER_SIG",
+          "file": "WildSkin-rs/src/memory/signatures.rs",
+          "role": "global_pointer_load (sub_base + relative)",
+          "pattern": "48 8B 3D ? ? ? ? 48 85 FF 74 15 48 81 C7",
+          "wildcard_free_run_searched": "48 85 FF 74 15 48 81 C7",
+          "match_site": "0x1402164ba",
+          "resolved_global_slot": "0x141F10390",
+          "match": "unique (1 hit for the 8-byte run, carries the '48 8B 3D' prefix); loads Player global @0x141F10390."
+        },
+        "constants": ["0x141F10390 (Player global .data slot)", "0x290"],
+        "named_neighbors": {}
+      },
+      "vars": {
+        "db_state": { "note": "Interior match; host params not enumerated." },
+        "proposed": { "args": [] }
+      },
+      "last_resolved": {
+        "version": "16.14.794.5912",
+        "resolved_address": "0x1402163f0",
+        "method": "runtime_signature_global_load",
+        "score": 1.0
+      }
+    },
+    {
+      "id": "skin.global_donor.hero_list",
+      "metadata": {
+        "name": "HeroList_iterator_host",
+        "prototype": "int64_t sub_140293d80(...)",
+        "comment": "Host fn carrying the 'mov rax,[rip+HeroList]; mov rcx,[rax+8]; ... lea r8,[..rax*8]; cmp; jz' loop the runtime scrapes for GlobalPointers.hero_list (HERO_LIST_SIG). Match at 0x140293ddf loads HeroList global @0x141ED9F18 and iterates the vector. PROPOSED name/role; DB stripped as sub_140293d80.",
+        "confidence": "high",
+        "provenance": "metadata=inference; resolved_address/byte_sig/runtime_signature/constants=DB-measured"
+      },
+      "signature": {
+        "byte_sig": "48 ? ? ? 8B ? ? 4C ? ? ? ? 89 ? ? ? 4C 8D 0D ? ? ? ? 66 0F 1F 84 00 ? ? ? ? 41 ? ? ? F6 D0 0F B6 C8 42 ? ? ? ? 34 ? C0 ? ? 0F B6 D0 0F B6 C2 48 ? ? C0 ? ? 0F",
+        "cfg": { "note": "not_enumerated; entry prologue captured in byte_sig. Match site 0x140293ddf is interior." },
+        "size_bucket": "medium"
+      },
+      "anchors": {
+        "runtime_signature": {
+          "symbol": "HERO_LIST_SIG",
+          "file": "WildSkin-rs/src/memory/signatures.rs",
+          "role": "global_pointer_load (sub_base + relative)",
+          "pattern": "48 8B 05 ? ? ? ? 48 8B ? 08 8B 40 ? ? 8D ? ? ? 3B ? 74",
+          "wildcard_free_run_searched": "48 8B 48 08 8B 40 (register-specialized) + backward '48 8B 05' check",
+          "match_site": "0x140293ddf",
+          "match_bytes": "48 8B 05 32 61 C4 01 48 8B 48 08 8B 40 10 4C 8D 04 C1 49 3B C8 74",
+          "resolved_global_slot": "0x141ED9F18",
+          "match": "earliest full-pattern hit whose '48 8B ? 08' is preceded by a rip global-load; loads HeroList @0x141ED9F18."
+        },
+        "constants": ["0x141ED9F18 (HeroList global .data slot)"],
+        "named_neighbors": {}
+      },
+      "vars": {
+        "db_state": { "note": "Interior match; host params not enumerated." },
+        "proposed": { "args": [] }
+      },
+      "last_resolved": {
+        "version": "16.14.794.5912",
+        "resolved_address": "0x140293d80",
+        "method": "runtime_signature_global_load",
+        "score": 0.95
+      }
+    },
+    {
+      "id": "skin.global_donor.champion_manager",
+      "metadata": {
+        "name": "ChampionManager_index_host",
+        "prototype": "int64_t sub_140425e30(void* this)",
+        "comment": "Host fn carrying 'mov rcx,[rip+ChampionManager]; imul rdx,rax,0x1d8; mov rax,[rip+..]' the runtime scrapes for GlobalPointers.champion_manager (CHAMPION_MANAGER_SIG). Match at 0x140426023 loads ChampionManager global @0x141F15FD8 (0x1d8 element stride). PROPOSED name/role; DB stripped as sub_140425e30.",
+        "confidence": "high",
+        "provenance": "metadata=inference; resolved_address/byte_sig/runtime_signature/constants=DB-measured"
+      },
+      "signature": {
+        "byte_sig": "40 56 48 ? ? ? 48 8B F1 E8 ? ? ? ? 4C 8D 05 ? ? ? ? 48 ? ? 48 8B CA 48 ? ? ? 80 ? ? ? 75 ? 4C ? ? ? 73 ? 48 ? ? ? EB ? 48 8B C8 48 ? ? 80 ? ? ? 74 ? 80",
+        "cfg": { "note": "not_enumerated; entry prologue captured in byte_sig. Match site 0x140426023 is interior." },
+        "size_bucket": "medium"
+      },
+      "anchors": {
+        "runtime_signature": {
+          "symbol": "CHAMPION_MANAGER_SIG",
+          "file": "WildSkin-rs/src/memory/signatures.rs",
+          "role": "global_pointer_load (sub_base + relative)",
+          "pattern": "48 8B 0D ? ? ? ? 48 69 D0 ? ? 00 00 48 8B 05",
+          "wildcard_free_run_searched": "48 69 D0 (imul) + verify '48 8B 0D ????' prefix and '00 00 48 8B 05' tail",
+          "match_site": "0x140426023",
+          "match_bytes": "48 8B 0D AE 3F AB 01 48 69 D0 D8 01 00 00 48 8B 05",
+          "resolved_global_slot": "0x141F15FD8",
+          "match": "unique full-pattern hit (only candidate with the '48 8B 0D' prefix); loads ChampionManager @0x141F15FD8."
+        },
+        "constants": ["0x141F15FD8 (ChampionManager global .data slot)", "0x1d8 (element stride)"],
+        "named_neighbors": {}
+      },
+      "vars": {
+        "db_state": { "note": "Interior match; host params not enumerated." },
+        "proposed": { "args": [] }
+      },
+      "last_resolved": {
+        "version": "16.14.794.5912",
+        "resolved_address": "0x140425e30",
+        "method": "runtime_signature_global_load",
+        "score": 1.0
+      }
+    },
+    {
+      "id": "skin.global_donor.minion_list",
+      "metadata": {
+        "name": "UNRESOLVED_minion_list_host",
+        "prototype": "n/a",
+        "comment": "MINION_LIST_SIG host NOT resolved this session (honest gap, NOT fabricated). The pattern's longest wildcard-free run is 3 bytes (48 8B 0D / 48 8B 01) and BN search_bytes rejects '?' wildcards, so the long masked AOB (three consecutive '48 8B 0D ???? E8' blocks 12 bytes apart, then 'E8 ???? 48 8B 0D ???? 48 8B 01') could not be located by contiguous sub-run search. Scanned .text regions 0x140290000 / 0x1405a0000 / 0x140600000 / 0x1406e0000 / 0x140380000 for the 12-byte-spaced '48 8B 0D ... E8' triple; not found in those windows. Needs a wildcard-capable scan (feed the full masked AOB through the project's own aobscan) to resolve.",
+        "confidence": "low",
+        "provenance": "not measured; not_resolved"
+      },
+      "signature": {
+        "byte_sig": "not_resolved",
+        "cfg": { "note": "not_resolved" },
+        "size_bucket": "unknown"
+      },
+      "anchors": {
+        "runtime_signature": {
+          "symbol": "MINION_LIST_SIG",
+          "file": "WildSkin-rs/src/memory/signatures.rs",
+          "role": "global_pointer_load (sub_base + relative)",
+          "pattern": "48 8B 0D ? ? ? ? E8 ? ? ? ? 48 8B 0D ? ? ? ? E8 ? ? ? ? 48 8B 0D ? ? ? ? E8 ? ? ? ? E8 ? ? ? ? 48 8B 0D ? ? ? ? 48 8B 01",
+          "match": "NOT RESOLVED (search_bytes has no wildcard support; see comment)"
+        },
+        "constants": [],
+        "named_neighbors": {}
+      },
+      "vars": {
+        "db_state": { "note": "not_resolved" },
+        "proposed": {}
+      },
+      "last_resolved": {
+        "version": "16.14.794.5912",
+        "resolved_address": null,
+        "method": "not_resolved",
+        "score": 0.0
+      }
+    },
+    {
+      "id": "skin.global_donor.turret_list",
+      "metadata": {
+        "name": "TurretList_accessor_host",
+        "prototype": "int64_t sub_1405a67b0(void* this)",
+        "comment": "Host fn carrying 'mov rax,[rip+TurretList]; mov rbx,[rax+0x28]; test rbx,rbx; jz' the runtime scrapes for GlobalPointers.turret_list (TURRET_LIST_SIG). Match at 0x1405a67d5 loads TurretList global @0x141F3AE28 (list at +0x28). PROPOSED name/role; DB stripped as sub_1405a67b0.",
+        "confidence": "high",
+        "provenance": "metadata=inference; resolved_address/byte_sig/cfg/runtime_signature/constants=DB-measured"
+      },
+      "signature": {
+        "byte_sig": "40 53 48 ? ? ? 48 8B D9 E8 ? ? ? ? 48 8B D0 48 ? ? ? E8 ? ? ? ? 48 85 C0 74 ? 80 ? ? ? 74 ? 48 8B 05 ? ? ? ? 48 ? ? ? 48 85 DB 74 ? 48 8B 05 ? ? ? ? 48 8B 0D",
+        "cfg": { "blocks": 7, "edges": 11, "loops": 0, "note": "all blocks flow forward to sink 0x1405a6830; no back-edges. Match site 0x1405a67d5 is block 4." },
+        "size_bucket": "0x80-0x100"
+      },
+      "anchors": {
+        "runtime_signature": {
+          "symbol": "TURRET_LIST_SIG",
+          "file": "WildSkin-rs/src/memory/signatures.rs",
+          "role": "global_pointer_load (sub_base + relative)",
+          "pattern": "48 8B 05 ? ? ? ? 48 8B ? 28 48 85 ? 74",
+          "wildcard_free_run_searched": "48 8B 58 28 48 85 (register-specialized) + backward '48 8B 05' check",
+          "match_site": "0x1405a67d5",
+          "match_bytes": "48 8B 05 4C 06 93 01 48 8B 58 28 48 85 DB 74",
+          "resolved_global_slot": "0x141F3AE28",
+          "match": "sole '48 8B ? 28 48 85 ? 74' site preceded by a rip global-load (all others are pointer null-check idioms); loads TurretList @0x141F3AE28."
+        },
+        "constants": ["0x141F3AE28 (TurretList global .data slot)", "0x28 (list field offset)"],
+        "named_neighbors": {}
+      },
+      "vars": {
+        "db_state": { "note": "rcx(this) preserved into rbx at entry; interior match. Host params not enumerated." },
+        "proposed": { "args": [] }
+      },
+      "last_resolved": {
+        "version": "16.14.794.5912",
+        "resolved_address": "0x1405a67b0",
+        "method": "runtime_signature_global_load",
+        "score": 0.9
+      }
+    },
+    {
+      "id": "skin.global_donor.window",
+      "metadata": {
+        "name": "Window_ptr_load_host",
+        "prototype": "int64_t sub_14062ba50(...)",
+        "comment": "Host fn carrying 'mov rcx,[rip+g1]; call qword[rip+import]; mov rax,[rip+g2]' the runtime scrapes for GlobalPointers.window (WINDOW_SIG). WINDOW_SIG is relative and resolves the FIRST rip-load (48 8B 0D), giving the window global @0x141EB4080. Match at 0x14062cdae. Same host also loads ChampionManager elsewhere. PROPOSED name/role; DB stripped as sub_14062ba50.",
+        "confidence": "high",
+        "provenance": "metadata=inference; resolved_address/byte_sig/runtime_signature/constants=DB-measured"
+      },
+      "signature": {
+        "byte_sig": "48 ? ? ? ? 55 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 ? ? ? ? 48 81 EC ? ? ? ? 48 8D 05 ? ? ? ? 4C 8B E1 48 ? ? 48 89 0D ? ? ? ? 48 ? ? ? E8 ? ? ? ? 33 F6 48 8D",
+        "cfg": { "note": "not_enumerated (large fn); entry prologue captured in byte_sig. Match site 0x14062cdae is interior." },
+        "size_bucket": "large"
+      },
+      "anchors": {
+        "runtime_signature": {
+          "symbol": "WINDOW_SIG",
+          "file": "WildSkin-rs/src/memory/signatures.rs",
+          "role": "global_pointer_load (sub_base + relative; resolves the FIRST 48 8B 0D)",
+          "pattern": "48 8B 0D ? ? ? ? FF 15 ? ? ? ? 48 8B 05 ? ? ? ?",
+          "wildcard_free_run_searched": "FF 15 (paged) + verify '48 8B 05' at +6 and '48 8B 0D ????' prefix",
+          "match_site": "0x14062cdae",
+          "match_bytes": "48 8B 0D CB 72 8E 01 FF 15 1D 1D 3D 01 48 8B 05 BE D1 8A 01",
+          "resolved_global_slot": "0x141EB4080",
+          "match": "first 'FF 15 ???? 48 8B 05' in .text that also has the '48 8B 0D ????' prefix; resolves g1 (window) @0x141EB4080."
+        },
+        "constants": ["0x141EB4080 (Window g1 global .data slot)"],
+        "named_neighbors": { "note": "the FF 15 is a call through an IAT import between the two rip-loads." }
+      },
+      "vars": {
+        "db_state": { "note": "Large fn; interior match; host params not enumerated." },
+        "proposed": { "args": [] }
+      },
+      "last_resolved": {
+        "version": "16.14.794.5912",
+        "resolved_address": "0x14062ba50",
+        "method": "runtime_signature_global_load_first_match",
+        "score": 1.0
+      }
+    },
+    {
+      "id": "skin.fn.character_data_stack_push",
+      "metadata": {
+        "name": "CharacterDataStack__push_emplace",
+        "prototype": "int64_t sub_14022aee0(void* this, void* rdx, int32_t r8, int32_t r9, /* arg5..arg18 on stack */ ...)",
+        "comment": "THE CharacterDataStack push/emplace helper (PUSH_FN_SIG, call_target). PUSH_FN_SIG matches a call SITE at 0x1402a3bbd inside sub_1402a3a20 (the change_skin-adjacent offset-donor host) and follows its first E8 here. Stack layout confirms 18 params (rcx/rdx/r8/r9 + arg5..arg18), matching the '16.14 push = 18 args' finding. This is the same emplace helper the offset-donor forwards 17 fields to. PROPOSED name; DB stripped as sub_14022aee0.",
+        "confidence": "confirmed",
+        "provenance": "metadata=inference; resolved_address/byte_sig/vars.db_state/runtime_signature=DB-measured"
+      },
+      "signature": {
+        "byte_sig": "48 ? ? ? ? 48 ? ? ? ? 48 ? ? ? ? 55 41 54 41 55 41 56 41 57 48 ? ? ? ? 48 81 EC ? ? ? ? 48 8B DA 45 8B F9 48 ? ? ? 45 8B F0 48 8B F9 48 ? ? 74 ? 48 81 C2",
+        "cfg": { "note": "not_enumerated (large fn); entry prologue captured in byte_sig." },
+        "size_bucket": "large"
+      },
+      "anchors": {
+        "runtime_signature": {
+          "symbol": "PUSH_FN_SIG",
+          "file": "WildSkin-rs/src/memory/signatures.rs",
+          "role": "call_target",
+          "pattern": "E8 ? ? ? ? 48 8D 8D ? ? 00 00 E8 ? ? ? ? 48 85 C0 74 ? 48 85 ED",
+          "abi_type": "18-arg push (rcx,rdx,r8,r9 + 14 stack args)",
+          "call_site": "0x1402a3bbd (in sub_1402a3a20)",
+          "call_site_bytes": "E8 1E 73 F8 FF 48 8D 8D 78 12 00 00 E8 52 36 06 00 48 85 C0 74 1B 48 85 ED",
+          "match": "unique in the change_skin host; first E8 (rel32 0xfff8731e = -0x78ce2) targets 0x14022aee0."
+        },
+        "constants": [],
+        "named_neighbors": { "callers": ["sub_1402a3a20 (CharacterObject_set_model_and_skin, the offset-donor host)"] }
+      },
+      "vars": {
+        "db_state": {
+          "params": [
+            { "db_name": "arg1", "type": "void*", "storage": "rcx" },
+            { "db_name": "arg2", "type": "void*", "storage": "rdx" },
+            { "db_name": "arg3", "type": "int32_t", "storage": "r8" },
+            { "db_name": "arg4", "type": "int32_t", "storage": "r9" },
+            { "db_name": "arg5..arg18", "type": "mixed (char/int32/char*)", "note": "14 stack args at rsp+0x28..+0x90; arg12/arg14/arg18 are char* (model strings), arg13/arg15/arg17 int32" }
+          ],
+          "note": "18 params total, confirmed via get_function_stack_layout."
+        },
+        "proposed": { "args": [ { "index": 0, "db_name": "arg1", "proposed": "this", "type": "CharacterDataStack*", "storage": "rcx" } ] }
+      },
+      "last_resolved": {
+        "version": "16.14.794.5912",
+        "resolved_address": "0x14022aee0",
+        "method": "runtime_signature_call_target",
+        "score": 1.0
+      }
+    },
+    {
+      "id": "skin.fn.translate_string",
+      "metadata": {
+        "name": "translate_string_helper",
+        "prototype": "void* sub_1411ba5c0(void* this, char p2, ...)",
+        "comment": "String-translate helper (TRANSLATE_STRING_FN_SIG, call_target). Two call sites (0x140367147 in sub_1403670f0, 0x140368672 in sub_1403685a0) both follow their E8 to 0x1411ba5c0. Small rbx-frame fn with byte args; tail-calls another routine. PROPOSED name; DB stripped as sub_1411ba5c0.",
+        "confidence": "high",
+        "provenance": "metadata=inference; resolved_address/byte_sig/runtime_signature=DB-measured"
+      },
+      "signature": {
+        "byte_sig": "40 53 48 ? ? ? 80 ? ? 48 8B C1 8B D1 74 ? 48 FF C0 48 8B D0 80 ? ? 75 ? 2B D1 48 ? ? ? ? 89 ? ? ? F6 ? ? 74 ? 8D ? ? 89 ? ? ? EB ? 89 ? ? ? 48 ? ? ? ? E8",
+        "cfg": { "note": "small fn; not fully enumerated." },
+        "size_bucket": "0x100-0x200"
+      },
+      "anchors": {
+        "runtime_signature": {
+          "symbol": "TRANSLATE_STRING_FN_SIG",
+          "file": "WildSkin-rs/src/memory/signatures.rs",
+          "role": "call_target",
+          "pattern": "E8 ? ? ? ? 0F 57 DB 4C 8B C0 F3 0F 5A DE",
+          "wildcard_free_run_searched": "0F 57 DB 4C 8B C0 F3 0F 5A DE",
+          "call_sites": ["0x140367147 (sub_1403670f0)", "0x140368672 (sub_1403685a0)"],
+          "match": "2 call sites, both E8 rel32 target 0x1411ba5c0; scanner takes the first."
+        },
+        "constants": [],
+        "named_neighbors": {}
+      },
+      "vars": {
+        "db_state": {
+          "params": [
+            { "db_name": "arg1", "type": "void*", "storage": "rcx" },
+            { "db_name": "arg2", "type": "char", "storage": "dl" },
+            { "db_name": "arg_8..arg_c", "type": "uint8_t", "note": "spilled byte args on stack" }
+          ],
+          "note": "rbx-frame; byte-oriented args."
+        },
+        "proposed": { "args": [] }
+      },
+      "last_resolved": {
+        "version": "16.14.794.5912",
+        "resolved_address": "0x1411ba5c0",
+        "method": "runtime_signature_call_target",
+        "score": 1.0
+      }
+    },
+    {
+      "id": "skin.fn.gold_redirect_target",
+      "metadata": {
+        "name": "gold_redirect_adjustor_thunk",
+        "prototype": "void sub_14027b050(void* rcx) /* add rcx, imm32; jmp real */",
+        "comment": "GOLD_REDIRECT_FN_SIG (call_target) target: a 2-instruction adjustor thunk 'add rcx,imm32; jmp' (this-pointer adjust then tail-jump). Call SITE at 0x1402248d8 in sub_140224810, where the returned value is compared 'cmp r14,rax; sete al'. Only the '4C 3B F0 0F 94 C0' modrm variant carried a preceding E8. PROPOSED name; DB stripped as sub_14027b050.",
+        "confidence": "high",
+        "provenance": "metadata=inference; resolved_address/byte_sig/cfg/runtime_signature=DB-measured"
+      },
+      "signature": {
+        "byte_sig": "48 81 C1 ? ? ? ? E9",
+        "cfg": { "blocks": 1, "edges": 0, "loops": 0, "note": "add rcx,imm32; jmp (tail call). 12 bytes." },
+        "size_bucket": "<0x100"
+      },
+      "anchors": {
+        "runtime_signature": {
+          "symbol": "GOLD_REDIRECT_FN_SIG",
+          "file": "WildSkin-rs/src/memory/signatures.rs",
+          "role": "call_target",
+          "pattern": "E8 ? ? ? ? 4C 3B ? 0F 94 C0",
+          "wildcard_free_run_searched": "modrm-swept '4C 3B ?? 0F 94 C0'; only F0 (cmp r14,rax) had a preceding E8",
+          "call_site": "0x1402248d8 (in sub_140224810)",
+          "call_site_bytes": "E8 73 67 05 00 4C 3B F0 0F 94 C0",
+          "match": "E8 rel32 0x00056773 targets 0x14027b050 (adjustor thunk). first-match caveat: not every modrm swept, but the F0 site is the only one with a valid E8 prefix among those checked."
+        },
+        "constants": [],
+        "named_neighbors": { "callers": ["sub_140224810"] }
+      },
+      "vars": {
+        "db_state": { "note": "Adjustor thunk; single register operand (rcx)." },
+        "proposed": { "args": [ { "index": 0, "proposed": "this", "type": "void*", "storage": "rcx" } ] }
+      },
+      "last_resolved": {
+        "version": "16.14.794.5912",
+        "resolved_address": "0x14027b050",
+        "method": "runtime_signature_call_target",
+        "score": 0.85
+      }
+    },
+    {
+      "id": "skin.fn.msvc_string_dtor",
+      "metadata": {
+        "name": "msvc_string_dtor",
+        "prototype": "void sub_1411a6e20(void* this)",
+        "comment": "The game's MSVC std::string destructor (MSVC_STRING_DTOR_SIG). Pattern matches the dtor's own entry prologue directly (first byte F6, not E8), so resolve() returns the match address as-is. Used by the Lux/Sona chroma clear path (check_special_skins) to free a discarded stack element's model string. 'F6 41 0C 01 74 08 48 8B 09' = test byte[rcx+0xc],1; jz +8; mov rcx,[rcx]; then tail-jmp to free. PROPOSED name; DB stripped as sub_1411a6e20.",
+        "confidence": "confirmed",
+        "provenance": "metadata=inference; resolved_address/byte_sig/cfg/runtime_signature=DB-measured"
+      },
+      "signature": {
+        "byte_sig": "F6 ? ? ? 74 ? 48 ? ? E9 ? ? ? ? C3",
+        "cfg": { "blocks": 3, "edges": 2, "loops": 0, "note": "entry has TrueBranch->0x1411a6e2e (ret) + FalseBranch->0x1411a6e26 (mov rcx,[rcx]; tail-jmp free). ~15 bytes." },
+        "size_bucket": "<0x100"
+      },
+      "anchors": {
+        "runtime_signature": {
+          "symbol": "MSVC_STRING_DTOR_SIG",
+          "file": "WildSkin-rs/src/memory/signatures.rs",
+          "role": "entry_prologue (sub_base, no call-rel32; match address returned as-is)",
+          "pattern": "F6 41 0C 01 74 08 48 8B 09",
+          "wildcard_free_run_searched": "F6 41 0C 01 74 08 48 8B 09",
+          "match_site": "0x1411a6e20",
+          "match": "unique (1 hit); match address == function entry."
+        },
+        "constants": ["0xc (heap-flag byte offset)"],
+        "named_neighbors": {}
+      },
+      "vars": {
+        "db_state": { "note": "1 param (rcx=this=std::string*)." },
+        "proposed": { "args": [ { "index": 0, "proposed": "this", "type": "std::string*", "storage": "rcx" } ] }
+      },
+      "last_resolved": {
+        "version": "16.14.794.5912",
+        "resolved_address": "0x1411a6e20",
+        "method": "runtime_signature_entry_prologue",
+        "score": 1.0
+      }
     }
   ]
 }

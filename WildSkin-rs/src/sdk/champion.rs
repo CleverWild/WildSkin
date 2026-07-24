@@ -1,9 +1,8 @@
 use super::primitives::{AString, RiotArray};
 
-// These field names deliberately match the reverse-engineered game/original
-// C++ field names (skin_id, skin_name, champion_name) rather than clippy's
-// preferred shorter names — renaming them would reduce traceability against
-// the original layout these structs mirror.
+// Field names deliberately match the RE'd C++ names (skin_id, skin_name,
+// champion_name) over clippy's shorter ones, for traceability against the
+// original layout.
 crate::offset!(
     #[allow(clippy::struct_field_names, reason = "field names intentionally match the original reverse-engineered layout")]
     pub struct Skin {

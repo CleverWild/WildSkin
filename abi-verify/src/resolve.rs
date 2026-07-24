@@ -8,26 +8,23 @@
 pub enum ResolveError {
     /// The pattern matched nowhere in the searched bytes.
     NotFound,
-    /// The pattern resolved to two or more *distinct* target functions — it's
-    /// no longer a unique locator (e.g. after a game patch introduced a
-    /// second matching byte sequence). The count is the number of distinct
-    /// targets found before the search stopped (always >= 2).
+    /// Pattern resolved to two or more distinct targets, so it's no longer a
+    /// unique locator. Count is distinct targets found before stopping (>= 2).
     Ambiguous(usize),
 }
 
-/// Scans `text` for `pattern`, mapping each match position to a resolved
-/// target via `resolve_one` (which returns `None` to reject a spurious match,
-/// e.g. one that isn't the expected `E8` call), collecting *distinct*
-/// targets. Stops as soon as a second distinct target is seen — so a pattern
-/// that's still unique does full work only once, and an ambiguous one bails
-/// early rather than scanning the whole section.
+/// Scans `text` for `pattern`, mapping each match to a target via `resolve_one`
+/// (`None` rejects a spurious match), collecting distinct targets. Stops at the
+/// second distinct target so an ambiguous pattern bails early.
 fn resolve_unique(
     text: &[u8],
     pattern: &str,
     resolve_one: impl Fn(usize) -> Option<usize> + Send + Sync,
 ) -> Result<usize, ResolveError> {
-    let Some(scanner) =
-        aobscan::PatternBuilder::from_ida_style(pattern).ok().and_then(|builder| builder.with_threads(1).ok()).map(aobscan::PatternBuilder::build)
+    let Some(scanner) = aobscan::PatternBuilder::from_ida_style(pattern)
+        .ok()
+        .and_then(|builder| builder.with_threads(1).ok())
+        .map(aobscan::PatternBuilder::build)
     else {
         // A malformed pattern can't match anything; treat as not found.
         return Err(ResolveError::NotFound);
@@ -40,9 +37,8 @@ fn resolve_unique(
         {
             targets.push(target);
         }
-        // aobscan's callback contract: `true` continues the scan, `false`
-        // stops it. Keep scanning until a second distinct target proves
-        // ambiguity, then stop early.
+        // aobscan callback: `true` continues, `false` stops. Stop once a
+        // second distinct target proves ambiguity.
         targets.len() < 2
     });
 
@@ -53,21 +49,18 @@ fn resolve_unique(
     }
 }
 
-/// Resolves a signature whose match position lands directly on the target
-/// function's own first byte (no indirection) — e.g. a pattern that matches
-/// the function's own prologue.
+/// Resolves a signature whose match lands on the target's own first byte
+/// (no indirection), e.g. a prologue pattern.
 pub fn resolve_direct(text: &[u8], pattern: &str) -> Result<usize, ResolveError> {
     resolve_unique(text, pattern, Some)
 }
 
-/// Resolves a signature whose match position lands on an `E8 rel32` `CALL`.
-///
-/// Follows the call to the address it targets — mirroring
-/// `memory::scanner::resolve`'s special-case handling of `sub_base`
-/// signatures that identify a function via one of its call sites rather
-/// than its own body. Two call sites that target the *same* function
-/// resolve to one distinct target (not ambiguous); only distinct targets
-/// count toward ambiguity.
+/// Resolves a signature whose match lands on an `E8 rel32` CALL, following it
+/// to the target. 
+/// 
+/// Mirrors `memory::scanner::resolve`'s `sub_base` handling
+/// (identify a function via a call site). Two sites to the same function are
+/// one distinct target, not ambiguous.
 pub fn resolve_call_target(text: &[u8], pattern: &str) -> Result<usize, ResolveError> {
     resolve_unique(text, pattern, |match_offset| {
         if text.get(match_offset).copied() != Some(0xE8) {
@@ -82,7 +75,7 @@ pub fn resolve_call_target(text: &[u8], pattern: &str) -> Result<usize, ResolveE
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_call_target, resolve_direct, ResolveError};
+    use super::{ResolveError, resolve_call_target, resolve_direct};
 
     #[test]
     fn resolve_direct_finds_the_match_position() {
@@ -93,14 +86,20 @@ mod tests {
     #[test]
     fn resolve_direct_returns_not_found_when_absent() {
         let text = [0x90, 0x90, 0x90];
-        assert_eq!(resolve_direct(&text, "AA BB CC"), Err(ResolveError::NotFound));
+        assert_eq!(
+            resolve_direct(&text, "AA BB CC"),
+            Err(ResolveError::NotFound)
+        );
     }
 
     #[test]
     fn resolve_direct_is_ambiguous_on_two_matches() {
         // "AA BB" occurs at offsets 0 and 3 -> two distinct targets.
         let text = [0xAA, 0xBB, 0x90, 0xAA, 0xBB, 0x90, 0x90];
-        assert_eq!(resolve_direct(&text, "AA BB"), Err(ResolveError::Ambiguous(2)));
+        assert_eq!(
+            resolve_direct(&text, "AA BB"),
+            Err(ResolveError::Ambiguous(2))
+        );
     }
 
     #[test]
@@ -116,7 +115,10 @@ mod tests {
     #[test]
     fn resolve_call_target_returns_not_found_when_match_is_not_a_call() {
         let text = [0x90, 0x90, 0xAA, 0xBB, 0xCC, 0x90];
-        assert_eq!(resolve_call_target(&text, "AA BB CC"), Err(ResolveError::NotFound));
+        assert_eq!(
+            resolve_call_target(&text, "AA BB CC"),
+            Err(ResolveError::NotFound)
+        );
     }
 
     #[test]
