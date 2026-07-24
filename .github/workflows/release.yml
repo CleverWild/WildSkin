@@ -41,8 +41,8 @@ jobs:
           fetch-depth: 0
 
       # Fail fast: `gh release create` only errors on a duplicate tag at the
-      # very end, after the ~30-min obfuscated build. Check up front so a
-      # re-run against an existing release dies in seconds, not half an hour.
+      # very end, after the full release build. Check up front so a re-run
+      # against an existing release dies in seconds, not after the whole build.
       - name: Ensure the release does not already exist
         if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
         env:
@@ -65,61 +65,21 @@ jobs:
           token: ${{ secrets.INJECTOR_TOKEN }}
 
       # Caches ~/.cargo + the compiled target dir (the ~200 dependency crates),
-      # which the manual registry-only cache never did; that's the bulk of the
-      # ~30-min Build below. Covers the root workspace's target/ only. The
-      # injector builds via its own separate manifest/lockfile, so its target/
-      # is outside this cache's scope.
-      #
-      # `key` busts the whole target cache when the ollvm toolchain version
-      # changes (RELEASE_TAG in cmd_setup_ollvm.rs): the --obfuscate build
-      # compiles deps with that toolchain, so stale .rlibs from an older
-      # obfuscator must not be reused. rust-cache keys on Cargo.lock + the
-      # default rustc, but not on the separately-linked ollvm toolchain.
-      #
-      # No conflict with the ollvm cache below: rust-cache's post-job cleanup
-      # strips target/ollvm-toolchain (keeps only build/.fingerprint/deps per
-      # dir), but that runs after "Save ollvm toolchain" has already persisted
-      # it, so the toolchain is neither lost nor duplicated into this cache.
+      # the bulk of the Build below. Covers the root workspace's target/ only;
+      # the injector builds via its own separate manifest/lockfile, so its
+      # target/ is outside this cache's scope.
       #
       # cache-on-failure: a build that dies after compiling deps still saves
-      # them for the next attempt (the manual restore/save split did this too).
+      # them for the next attempt.
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ollvm-${{ hashFiles('xtask/src/cmd_setup_ollvm.rs') }}
           cache-on-failure: true
 
       # windows-latest ships Rust/rustup preinstalled; rustup auto-installs
       # the toolchain pinned by rust-toolchain.toml on first cargo invocation.
 
-      # --obfuscate needs the ollvm toolchain; setup-ollvm downloads+links it
-      # and is idempotent, so it's safe to run every time. The download
-      # itself is what's cached here, keyed on the file that pins its
-      # version (RELEASE_TAG in cmd_setup_ollvm.rs) so a version bump busts
-      # the cache automatically instead of silently reusing a stale build.
-      - name: Restore ollvm toolchain
-        id: ollvm-cache
-        uses: actions/cache/restore@v6
-        with:
-          path: target/ollvm-toolchain
-          key: ollvm-${{ hashFiles('xtask/src/cmd_setup_ollvm.rs') }}
-
-      - name: Setup ollvm toolchain
-        id: setup-ollvm
-        run: cargo xtask setup-ollvm
-
-      # Saves run even on failure (`if: always()`), so a failed build still
-      # persists what it already downloaded for the next attempt. Only save the
-      # ollvm toolchain if its download actually succeeded, or a half-downloaded
-      # tree would poison the cache. Skip when the exact key was already a hit.
-      - name: Save ollvm toolchain
-        if: always() && steps.setup-ollvm.outcome == 'success' && steps.ollvm-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: target/ollvm-toolchain
-          key: ollvm-${{ hashFiles('xtask/src/cmd_setup_ollvm.rs') }}
-
       - name: Build
-        run: cargo xtask build --obfuscate
+        run: cargo xtask build --release
 
       - uses: actions/upload-artifact@v7
         with:
@@ -167,7 +127,8 @@ jobs:
         with:
           config: cliff.toml
           args: ${{ steps.range.outputs.range }} --strip all
-          output: release-changelog.md
+        env:
+          OUTPUT: release-changelog.md
 
       - name: Append changelog to release notes
         if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
