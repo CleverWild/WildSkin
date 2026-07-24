@@ -1,0 +1,39 @@
+# git-cliff config -- groups conventional commits into release notes for the
+# release workflow. Minimal: this repo pushes straight to main (no PRs), so no
+# PR-number preprocessing. Header/footer empty; the release step wraps it.
+
+[changelog]
+header = ""
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+{% for commit in commits %}
+- {{ commit.message | split(pat="\n") | first | trim }} ({{ commit.id | truncate(length=7, end="") }})
+{%- endfor %}
+{% endfor %}"""
+trim = true
+footer = ""
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+filter_commits = false
+tag_pattern = "v[0-9]*"
+topo_order = false
+sort_commits = "oldest"
+commit_parsers = [
+    { message = "^feat", group = "Features" },
+    { message = "^fix", group = "Bug Fixes" },
+    { message = "^perf", group = "Performance" },
+    { message = "^refactor", group = "Refactoring" },
+    { message = "^docs", group = "Documentation" },
+    { message = "^test", group = "Tests" },
+    { message = "^ci", group = "CI" },
+    { message = "^build", group = "Build" },
+    { message = "^data", group = "Data" },
+    { message = "^style", group = "Style" },
+    { message = "^chore\\(release\\)", skip = true },
+    { message = "^chore", group = "Chores" },
+    { message = ".*", group = "Other" },
+]
